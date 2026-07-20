@@ -1,6 +1,6 @@
 # Bubberton9001
 
-**The skills-powered AI agent for Roblox Studio.** Bubberton9001—**B9** for
+**The skills-powered AI agent for Roblox Studio. ** Bubberton9001 ** for
 short—plans the work, researches current answers, changes the game, verifies the
 result, and corrects errors.
 
@@ -92,8 +92,8 @@ The plan and tool progress stay visible while B9 works.
 
 ```bash
 # Clone the repo
-git clone https://github.com/jakesixtyoneeighty/stud.git
-cd stud
+git clone https://github.com/jakesixtyoneeighty/bubbertron9001.git
+cd bubbertron9001
 
 # Install dependencies
 npm install
@@ -292,7 +292,7 @@ Contributions are welcome!
 4. Push to branch (`git push origin feature/amazing`)
 5. Open a Pull Request
 
-See [CLAUDE.md](./CLAUDE.md) for code style guidelines and architecture details.
+See [AGENTS.md](./AGENTS.md) for code style guidelines and architecture details.
 
 ## Community
 
