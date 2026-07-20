@@ -767,7 +767,7 @@ export function Home() {
                 Let's build some cool shit!
               </h1>
               <p className="text-muted-foreground max-w-md mx-auto">
-                Meet B9 your Roblox master builder. He's a beast. Drop your ideas below —
+                Meet B9, your Roblox master builder. He's a beast. Drop your ideas below —
                 scripts, systems, GUIs, the whole world. If it can built, B9 can build it.
               </p>
             </div>
