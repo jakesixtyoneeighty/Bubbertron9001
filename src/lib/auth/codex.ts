@@ -5,7 +5,13 @@
  * and proxy requests through ChatGPT's Codex API endpoint.
  */
 
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { appFetch } from "@/lib/http";
+import {
+  deleteSecretValue,
+  getSecretValue,
+  SECRET_KEYS,
+  setSecretValue,
+} from "@/lib/secure-storage";
 
 // OAuth Configuration
 const CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
@@ -14,9 +20,6 @@ const ISSUER = "https://auth.openai.com";
 const CODEX_API_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses";
 const OAUTH_PORT = 1455;
 const REDIRECT_URI = `http://localhost:${OAUTH_PORT}/auth/callback`;
-
-// Token storage key
-const AUTH_STORAGE_KEY = "stud_chatgpt_auth";
 
 export interface TokenResponse {
   access_token: string;
@@ -77,14 +80,18 @@ async function generatePKCE(): Promise<PkceCodes> {
   return { verifier, challenge };
 }
 
-function decodeJwt(token: string): IdTokenClaims {
+export function decodeJwt(token: string): IdTokenClaims {
   const parts = token.split(".");
   if (parts.length !== 3) {
     throw new Error("Invalid JWT format");
   }
-  const payload = parts[1];
-  const decoded = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
-  return JSON.parse(decoded);
+  const payload = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+  const padded = payload + "=".repeat((4 - (payload.length % 4)) % 4);
+  const decoded = atob(padded);
+  const bytes = Uint8Array.from(decoded, (character) =>
+    character.charCodeAt(0),
+  );
+  return JSON.parse(new TextDecoder().decode(bytes));
 }
 
 export function extractAccountIdFromClaims(claims: IdTokenClaims): string | undefined {
@@ -107,6 +114,7 @@ function buildAuthorizeUrl(pkce: PkceCodes, state: string): string {
     id_token_add_organizations: "true",
     codex_cli_simplified_flow: "true",
     state,
+    // Kept for compatibility with the registered public OAuth client.
     originator: "stud",
   });
   return `${ISSUER}/oauth/authorize?${params.toString()}`;
@@ -117,7 +125,7 @@ async function exchangeCodeForTokens(
   code: string,
   pkce: PkceCodes
 ): Promise<TokenResponse> {
-  const response = await fetch(`${ISSUER}/oauth/token`, {
+  const response = await appFetch(`${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -139,7 +147,7 @@ async function exchangeCodeForTokens(
 
 // Refresh access token
 async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> {
-  const response = await fetch(`${ISSUER}/oauth/token`, {
+  const response = await appFetch(`${ISSUER}/oauth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -157,23 +165,64 @@ async function refreshAccessToken(refreshToken: string): Promise<TokenResponse> 
   return response.json();
 }
 
-// Storage functions
+function isOAuthAuth(value: unknown): value is OAuthAuth {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const candidate = value as Record<string, unknown>;
+  return (
+    candidate.type === "oauth" &&
+    typeof candidate.access === "string" &&
+    candidate.access.length > 0 &&
+    typeof candidate.refresh === "string" &&
+    candidate.refresh.length > 0 &&
+    typeof candidate.expires === "number" &&
+    Number.isFinite(candidate.expires) &&
+    candidate.expires > 0 &&
+    (candidate.accountId === undefined ||
+      typeof candidate.accountId === "string")
+  );
+}
+
+function discardInvalidStoredAuth(): void {
+  void deleteSecretValue(SECRET_KEYS.codexOAuth).catch((error) => {
+    console.warn("[Codex] Could not remove invalid stored credentials:", error);
+  });
+}
+
+// Storage functions. The synchronous read is backed by a cache that is
+// hydrated from the OS keychain before the React application is imported.
 export function getStoredAuth(): OAuthAuth | null {
   try {
-    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
+    const stored = getSecretValue(SECRET_KEYS.codexOAuth);
     if (!stored) return null;
-    return JSON.parse(stored);
+    const parsed: unknown = JSON.parse(stored);
+    if (!isOAuthAuth(parsed)) {
+      discardInvalidStoredAuth();
+      return null;
+    }
+    return parsed;
   } catch {
+    discardInvalidStoredAuth();
     return null;
   }
 }
 
-export function saveAuth(auth: OAuthAuth): void {
-  localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(auth));
+export async function saveAuth(auth: OAuthAuth): Promise<void> {
+  if (!isOAuthAuth(auth)) {
+    throw new Error("Refusing to store invalid OAuth credentials");
+  }
+  await setSecretValue(SECRET_KEYS.codexOAuth, JSON.stringify(auth));
 }
 
-export function clearAuth(): void {
-  localStorage.removeItem(AUTH_STORAGE_KEY);
+export async function clearAuth(): Promise<void> {
+  await deleteSecretValue(SECRET_KEYS.codexOAuth);
+}
+
+export function clearPendingOAuth(): void {
+  sessionStorage.removeItem("oauth_state");
+  sessionStorage.removeItem("oauth_pkce");
 }
 
 export function isAuthenticated(): boolean {
@@ -182,6 +231,8 @@ export function isAuthenticated(): boolean {
   console.log("[Codex] isAuthenticated check:", { hasAuth: auth !== null, hasRefresh: auth?.refresh !== undefined, result });
   return result;
 }
+
+let refreshPromise: Promise<string | null> | null = null;
 
 // Get valid access token (refreshing if needed)
 export async function getValidAccessToken(): Promise<string | null> {
@@ -194,32 +245,38 @@ export async function getValidAccessToken(): Promise<string | null> {
     return auth.access;
   }
 
-  // Refresh the token
-  try {
-    console.log("[Codex] Refreshing access token...");
-    const tokens = await refreshAccessToken(auth.refresh);
-    
-    let accountId = auth.accountId;
-    if (tokens.id_token) {
-      const claims = decodeJwt(tokens.id_token);
-      accountId = extractAccountIdFromClaims(claims) || accountId;
-    }
+  if (refreshPromise) return refreshPromise;
 
-    const newAuth: OAuthAuth = {
-      type: "oauth",
-      access: tokens.access_token,
-      refresh: tokens.refresh_token || auth.refresh,
-      expires: Date.now() + tokens.expires_in * 1000,
-      accountId,
-    };
-    
-    saveAuth(newAuth);
-    return newAuth.access;
-  } catch (error) {
-    console.error("[Codex] Token refresh failed:", error);
-    clearAuth();
-    return null;
-  }
+  refreshPromise = (async () => {
+    try {
+      console.log("[Codex] Refreshing access token...");
+      const tokens = await refreshAccessToken(auth.refresh);
+
+      let accountId = auth.accountId;
+      if (tokens.id_token) {
+        const claims = decodeJwt(tokens.id_token);
+        accountId = extractAccountIdFromClaims(claims) || accountId;
+      }
+
+      const newAuth: OAuthAuth = {
+        type: "oauth",
+        access: tokens.access_token,
+        refresh: tokens.refresh_token || auth.refresh,
+        expires: Date.now() + tokens.expires_in * 1000,
+        accountId,
+      };
+
+      await saveAuth(newAuth);
+      return newAuth.access;
+    } catch (error) {
+      console.error("[Codex] Token refresh failed:", error);
+      return null;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
 }
 
 // Start OAuth login flow
@@ -253,10 +310,6 @@ export async function handleOAuthCallback(
 
   const pkce: PkceCodes = JSON.parse(storedPkce);
 
-  // Clean up session storage
-  sessionStorage.removeItem("oauth_state");
-  sessionStorage.removeItem("oauth_pkce");
-
   // Exchange code for tokens
   const tokens = await exchangeCodeForTokens(code, pkce);
 
@@ -275,7 +328,8 @@ export async function handleOAuthCallback(
     accountId,
   };
 
-  saveAuth(auth);
+  await saveAuth(auth);
+  clearPendingOAuth();
   return auth;
 }
 
@@ -308,7 +362,7 @@ export async function codexFetch(
   }
 
   // Use Tauri's fetch which bypasses CORS
-  const response = await tauriFetch(CODEX_API_ENDPOINT, {
+  const response = await appFetch(CODEX_API_ENDPOINT, {
     ...init,
     headers,
   });
@@ -323,34 +377,5 @@ export async function codexFetch(
 
   return response;
 }
-
-// Allowed Codex models for Plus/Pro users - from models.dev
-export const CODEX_MODELS = [
-  // GPT-5 series (top priority)
-  { id: "gpt-5.2", name: "GPT-5.2", description: "Latest GPT-5.2", isNew: true },
-  { id: "gpt-5.2-chat-latest", name: "GPT-5.2 Latest", description: "Most recent GPT-5.2", isNew: true },
-  { id: "gpt-5.1", name: "GPT-5.1", description: "GPT-5.1 release", isNew: true },
-  { id: "gpt-5.1-chat-latest", name: "GPT-5.1 Latest", description: "Most recent GPT-5.1", isNew: true },
-  { id: "gpt-5", name: "GPT-5", description: "Base GPT-5 model", isNew: true },
-  { id: "gpt-5-pro", name: "GPT-5 Pro", description: "Pro version", isNew: true },
-  { id: "gpt-5-mini", name: "GPT-5 Mini", description: "Fast and efficient", isNew: true },
-  { id: "gpt-5-nano", name: "GPT-5 Nano", description: "Ultrafast", isNew: true },
-  { id: "gpt-5-thinking", name: "GPT-5 Thinking", description: "Extended reasoning", reasoning: true, isNew: true },
-  // GPT-4 series
-  { id: "chatgpt-4o-latest", name: "ChatGPT-4o Latest", description: "Latest ChatGPT-4o" },
-  { id: "gpt-4o", name: "GPT-4o", description: "GPT-4 Omni" },
-  { id: "gpt-4o-mini", name: "GPT-4o Mini", description: "Fast and efficient" },
-  { id: "gpt-4.1", name: "GPT-4.1", description: "GPT-4.1 release" },
-  { id: "gpt-4.1-mini", name: "GPT-4.1 Mini", description: "Compact GPT-4.1" },
-  { id: "gpt-4.1-nano", name: "GPT-4.1 Nano", description: "Ultrafast" },
-  // Reasoning models
-  { id: "o3", name: "o3", description: "Latest reasoning", reasoning: true, isNew: true },
-  { id: "o3-mini", name: "o3 Mini", description: "Fast reasoning", reasoning: true },
-  { id: "o3-pro", name: "o3 Pro", description: "Pro reasoning", reasoning: true, isNew: true },
-  { id: "o4-mini", name: "o4 Mini", description: "Next-gen reasoning", reasoning: true, isNew: true },
-  { id: "o1", name: "o1", description: "Original reasoning", reasoning: true },
-  { id: "o1-mini", name: "o1 Mini", description: "Fast o1", reasoning: true },
-  { id: "o1-pro", name: "o1 Pro", description: "Pro o1", reasoning: true },
-] as const;
 
 export { OAUTH_PORT, REDIRECT_URI };

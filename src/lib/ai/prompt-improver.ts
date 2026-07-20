@@ -1,20 +1,21 @@
 /**
- * Prompt Improver - Enhances user prompts to be more effective for Stud
+ * Prompt Improver - Enhances prompts for Bubberton9001's agent workflow.
  *
  * Takes a basic prompt and restructures it to be clearer, more specific,
- * and better suited for Stud's tool-based workflow.
+ * and better suited for a skills-powered, tool-using Roblox agent.
  */
 
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { BRAND } from "@/config/brand";
 import { getValidAccessToken, getStoredAuth } from "@/lib/auth/codex";
+import { appFetch } from "@/lib/http";
 import { useSettingsStore } from "@/stores/settings";
 import { useAuthStore } from "@/stores/auth";
 
-const IMPROVE_PROMPT_SYSTEM = `You are a prompt improvement assistant for Stud, an AI agent for Roblox Studio.
+const IMPROVE_PROMPT_SYSTEM = `You improve prompts for ${BRAND.name}, a skills-powered AI agent for Roblox Studio.
 
-Your job is to take a user's rough prompt and improve it to be more effective for Stud's capabilities.
+Preserve the user's intent while making a rough request effective for ${BRAND.name}'s capabilities.
 
-Stud has these tools:
+${BRAND.name} can:
 - Create, delete, clone, move instances
 - Read/write/edit scripts (Luau)
 - Set properties on instances
@@ -22,6 +23,9 @@ Stud has these tools:
 - Insert free assets from Toolbox
 - Execute Luau code in Studio
 - Ask user questions when needed
+- Search current web and official Roblox documentation with citations
+- Search and progressively load 30 focused Roblox engineering skills
+- Plan, execute, verify, and correct multi-step work
 
 When improving prompts, you should:
 1. Make requirements explicit and specific
@@ -82,8 +86,9 @@ async function improveWithCodex(prompt: string): Promise<ImproveResult> {
 
   // Use the same model as the main chat - get from settings store
   const { selectedModel, selectedProvider } = useSettingsStore.getState();
-  // Only use the selected model if it's a Codex provider, otherwise fall back to chatgpt-4o-latest
-  const model = selectedProvider === "codex" ? selectedModel : "chatgpt-4o-latest";
+  // Only use the selected model if it's a Codex provider, otherwise use the
+  // balanced current Codex model.
+  const model = selectedProvider === "codex" ? selectedModel : "gpt-5.6-terra";
 
   // Use the same format as codex-chat.ts
   const body = {
@@ -112,7 +117,7 @@ async function improveWithCodex(prompt: string): Promise<ImproveResult> {
   try {
     console.log("[PromptImprover] Making Codex request...");
 
-    const response = await tauriFetch(CODEX_API_ENDPOINT, {
+    const response = await appFetch(CODEX_API_ENDPOINT, {
       method: "POST",
       headers,
       body: JSON.stringify(body),
@@ -186,7 +191,7 @@ async function improveWithCodex(prompt: string): Promise<ImproveResult> {
  */
 async function improveWithOpenAI(prompt: string, apiKey: string): Promise<ImproveResult> {
   try {
-    const response = await tauriFetch("https://api.openai.com/v1/chat/completions", {
+    const response = await appFetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         Authorization: `Bearer ${apiKey}`,
@@ -225,7 +230,7 @@ async function improveWithOpenAI(prompt: string, apiKey: string): Promise<Improv
  */
 async function improveWithAnthropic(prompt: string, apiKey: string): Promise<ImproveResult> {
   try {
-    const response = await tauriFetch("https://api.anthropic.com/v1/messages", {
+    const response = await appFetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
       headers: {
         "x-api-key": apiKey,
@@ -233,7 +238,7 @@ async function improveWithAnthropic(prompt: string, apiKey: string): Promise<Imp
         "anthropic-version": "2023-06-01",
       },
       body: JSON.stringify({
-        model: "claude-3-5-haiku-20241022",
+        model: "claude-haiku-4-5-20251001",
         max_tokens: 500,
         system: IMPROVE_PROMPT_SYSTEM,
         messages: [{ role: "user", content: prompt }],
@@ -258,7 +263,7 @@ async function improveWithAnthropic(prompt: string, apiKey: string): Promise<Imp
 }
 
 /**
- * Improve a prompt for Stud - automatically picks the best available provider
+ * Improve a prompt for Bubberton9001 using the best available provider.
  * Priority: OpenAI API > Anthropic API > Codex (ChatGPT Plus/Pro)
  */
 export async function improvePrompt(prompt: string): Promise<ImproveResult> {

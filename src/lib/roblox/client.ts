@@ -2,10 +2,13 @@
  * HTTP Client for Roblox Studio communication via Bridge Server
  *
  * The bridge server runs on localhost:3001 and acts as an intermediary
- * between Stud and the Roblox Studio plugin.
+ * between Bubberton9001 and the Roblox Studio plugin.
  */
 
+import { authenticatedLocalFetch } from "@/lib/local-bridge"
+
 const BRIDGE_URL = "http://localhost:3001"
+const BRIDGE_NAMESPACE = "bubberton9001"
 const TIMEOUT_MS = 15000
 
 export type StudioResponse<T> = { success: true; data: T } | { success: false; error: string }
@@ -13,12 +16,23 @@ export type StudioResponse<T> = { success: true; data: T } | { success: false; e
 /**
  * Send a request to Roblox Studio via the bridge server
  */
-export async function studioRequest<T>(endpoint: string, data?: object): Promise<StudioResponse<T>> {
+export async function studioRequest<T>(
+  endpoint: string,
+  data?: object,
+  signal?: AbortSignal
+): Promise<StudioResponse<T>> {
   const controller = new AbortController()
   const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS)
+  const abortFromRun = () => controller.abort()
+
+  if (signal?.aborted) {
+    controller.abort()
+  } else {
+    signal?.addEventListener("abort", abortFromRun, { once: true })
+  }
 
   try {
-    const response = await fetch(`${BRIDGE_URL}/stud/request`, {
+    const response = await authenticatedLocalFetch(`${BRIDGE_URL}/${BRIDGE_NAMESPACE}/request`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -45,11 +59,15 @@ export async function studioRequest<T>(endpoint: string, data?: object): Promise
     return { success: true, data: result as T }
   } catch (e) {
     if (e instanceof Error && e.name === "AbortError") {
+      if (signal?.aborted) {
+        return { success: false, error: "Agent run cancelled" }
+      }
       return { success: false, error: "Request timed out waiting for Studio response" }
     }
     return { success: false, error: `Failed to connect: ${e}` }
   } finally {
     clearTimeout(timeout)
+    signal?.removeEventListener("abort", abortFromRun)
   }
 }
 
@@ -58,7 +76,7 @@ export async function studioRequest<T>(endpoint: string, data?: object): Promise
  */
 export async function isStudioConnected(): Promise<boolean> {
   try {
-    const response = await fetch(`${BRIDGE_URL}/stud/status`, {
+    const response = await authenticatedLocalFetch(`${BRIDGE_URL}/${BRIDGE_NAMESPACE}/status`, {
       method: "GET",
       signal: AbortSignal.timeout(1000),
     })
@@ -75,7 +93,7 @@ export async function isStudioConnected(): Promise<boolean> {
  */
 export async function isBridgeRunning(): Promise<boolean> {
   try {
-    const response = await fetch(`${BRIDGE_URL}/stud/status`, {
+    const response = await authenticatedLocalFetch(`${BRIDGE_URL}/${BRIDGE_NAMESPACE}/status`, {
       method: "GET",
       signal: AbortSignal.timeout(1000),
     })
@@ -89,11 +107,11 @@ export function notConnectedError(): string {
   return `Roblox Studio is not connected.
 
 To use Roblox Studio tools:
-1. Make sure Stud desktop app is running (it starts the bridge server)
+1. Make sure Bubberton9001 desktop is running (it starts the bridge server)
 2. Open Roblox Studio
-3. Install the Stud plugin from studio-plugin/ folder
+3. Use Install Automatically or Download Paired Plugin in the desktop app
 4. Enable the plugin in Studio
-5. The plugin will automatically connect to Stud
+5. The plugin will automatically connect to Bubberton9001
 
-You can check the connection status in the Stud toolbar in Studio.`
+You can check the connection status in the Bubberton9001 toolbar in Studio.`
 }

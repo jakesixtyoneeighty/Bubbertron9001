@@ -17,32 +17,32 @@ const mockProvidersData: ProvidersData = {
     id: "openai",
     name: "OpenAI",
     models: {
+      "gpt-5.6-terra": {
+        id: "gpt-5.6-terra",
+        name: "GPT-5.6 Terra",
+        reasoning: true,
+        attachment: true,
+        temperature: false,
+        tool_call: true,
+        limit: { context: 1050000, output: 128000 },
+      },
+      "gpt-5.6-luna": {
+        id: "gpt-5.6-luna",
+        name: "GPT-5.6 Luna",
+        reasoning: true,
+        attachment: true,
+        temperature: false,
+        tool_call: true,
+        limit: { context: 1050000, output: 128000 },
+      },
       "gpt-4o": {
         id: "gpt-4o",
         name: "GPT-4o",
         reasoning: false,
-        attachment: true,
-        temperature: true,
-        tool_call: true,
-        limit: { context: 128000, output: 4096 },
-      },
-      "gpt-4o-mini": {
-        id: "gpt-4o-mini",
-        name: "GPT-4o Mini",
-        reasoning: false,
-        attachment: true,
-        temperature: true,
-        tool_call: true,
-        limit: { context: 128000, output: 4096 },
-      },
-      "o1": {
-        id: "o1",
-        name: "o1",
-        reasoning: true,
         attachment: false,
-        temperature: false,
+        temperature: true,
         tool_call: true,
-        limit: { context: 200000, output: 100000 },
+        limit: { context: 128000, output: 4096 },
       },
       "gpt-3.5-turbo": {
         id: "gpt-3.5-turbo",
@@ -85,7 +85,7 @@ describe("Models Fetcher", () => {
 
       expect(result).toEqual(mockProvidersData);
       expect(result.openai).toBeDefined();
-      expect(result.openai.models["gpt-4o"]).toBeDefined();
+      expect(result.openai.models["gpt-5.6-terra"]).toBeDefined();
     });
 
     it("should throw on network error", async () => {
@@ -161,32 +161,31 @@ describe("Models Fetcher", () => {
     it("should extract only Codex-allowed models from OpenAI", () => {
       const models = extractCodexModels(mockProvidersData);
 
-      // Should include gpt-4o, gpt-4o-mini, o1 but not gpt-3.5-turbo
+      // Only the current Codex model family should be selectable.
       const ids = models.map((m) => m.id);
-      expect(ids).toContain("gpt-4o");
-      expect(ids).toContain("gpt-4o-mini");
-      expect(ids).toContain("o1");
+      expect(ids).toContain("gpt-5.6-terra");
+      expect(ids).toContain("gpt-5.6-luna");
+      expect(ids).not.toContain("gpt-4o");
       expect(ids).not.toContain("gpt-3.5-turbo");
     });
 
-    it("should sort reasoning models after regular models", () => {
+    it("should sort current models by display name when reasoning is equal", () => {
       const models = extractCodexModels(mockProvidersData);
 
-      const o1Index = models.findIndex((m) => m.id === "o1");
-      const gpt4oIndex = models.findIndex((m) => m.id === "gpt-4o");
+      const lunaIndex = models.findIndex((m) => m.id === "gpt-5.6-luna");
+      const terraIndex = models.findIndex((m) => m.id === "gpt-5.6-terra");
 
-      // o1 (reasoning) should come after gpt-4o (non-reasoning)
-      expect(o1Index).toBeGreaterThan(gpt4oIndex);
+      expect(lunaIndex).toBeLessThan(terraIndex);
     });
 
     it("should mark reasoning models correctly", () => {
       const models = extractCodexModels(mockProvidersData);
 
-      const o1 = models.find((m) => m.id === "o1");
-      const gpt4o = models.find((m) => m.id === "gpt-4o");
+      const terra = models.find((m) => m.id === "gpt-5.6-terra");
+      const deprecated = models.find((m) => m.id === "gpt-4o");
 
-      expect(o1?.reasoning).toBe(true);
-      expect(gpt4o?.reasoning).toBe(false);
+      expect(terra?.reasoning).toBe(true);
+      expect(deprecated).toBeUndefined();
     });
 
     it("should return fallback models when OpenAI is missing", () => {

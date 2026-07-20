@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import {
+  decodeJwt,
   getStoredAuth,
   saveAuth,
   clearAuth,
@@ -8,10 +9,18 @@ import {
   type OAuthAuth,
   type IdTokenClaims,
 } from "../codex";
+import {
+  __secureStorageTestUtils,
+  initializeSecretStorage,
+  SECRET_KEYS,
+  setSecretValue,
+} from "@/lib/secure-storage";
 
 describe("Codex Auth", () => {
-  beforeEach(() => {
-    clearAuth();
+  beforeEach(async () => {
+    __secureStorageTestUtils.reset();
+    await initializeSecretStorage();
+    await clearAuth();
   });
 
   describe("storage functions", () => {
@@ -20,7 +29,7 @@ describe("Codex Auth", () => {
       expect(result).toBeNull();
     });
 
-    it("should save and retrieve auth", () => {
+    it("should save and retrieve auth", async () => {
       const auth: OAuthAuth = {
         type: "oauth",
         access: "test-access-token",
@@ -29,13 +38,13 @@ describe("Codex Auth", () => {
         accountId: "test-account-id",
       };
 
-      saveAuth(auth);
+      await saveAuth(auth);
       const result = getStoredAuth();
 
       expect(result).toEqual(auth);
     });
 
-    it("should clear auth", () => {
+    it("should clear auth", async () => {
       const auth: OAuthAuth = {
         type: "oauth",
         access: "test-access-token",
@@ -43,10 +52,10 @@ describe("Codex Auth", () => {
         expires: Date.now() + 3600000,
       };
 
-      saveAuth(auth);
+      await saveAuth(auth);
       expect(getStoredAuth()).not.toBeNull();
 
-      clearAuth();
+      await clearAuth();
       expect(getStoredAuth()).toBeNull();
     });
   });
@@ -56,7 +65,7 @@ describe("Codex Auth", () => {
       expect(isAuthenticated()).toBe(false);
     });
 
-    it("should return true when auth with refresh token is stored", () => {
+    it("should return true when auth with refresh token is stored", async () => {
       const auth: OAuthAuth = {
         type: "oauth",
         access: "test-access-token",
@@ -64,22 +73,49 @@ describe("Codex Auth", () => {
         expires: Date.now() + 3600000,
       };
 
-      saveAuth(auth);
+      await saveAuth(auth);
       expect(isAuthenticated()).toBe(true);
     });
 
-    it("should return false when auth has no refresh token", () => {
-      // Manually set invalid auth
-      localStorage.setItem(
-        "stud_chatgpt_auth",
+    it("should reject a stored object without a refresh token", async () => {
+      await setSecretValue(
+        SECRET_KEYS.codexOAuth,
         JSON.stringify({
           type: "oauth",
           access: "test-access-token",
           expires: Date.now() + 3600000,
-        })
+        }),
       );
 
       expect(isAuthenticated()).toBe(false);
+    });
+
+    it("should reject arbitrary stored JSON", async () => {
+      await setSecretValue(
+        SECRET_KEYS.codexOAuth,
+        JSON.stringify({ admin: true }),
+      );
+
+      expect(getStoredAuth()).toBeNull();
+    });
+  });
+
+  describe("JWT decoding", () => {
+    it("restores omitted base64url padding", () => {
+      const header = btoa(JSON.stringify({ alg: "none" }))
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+      const payload = btoa(
+        JSON.stringify({ chatgpt_account_id: "account-padding-test" }),
+      )
+        .replace(/\+/g, "-")
+        .replace(/\//g, "_")
+        .replace(/=+$/, "");
+
+      expect(decodeJwt(`${header}.${payload}.signature`)).toEqual({
+        chatgpt_account_id: "account-padding-test",
+      });
     });
   });
 

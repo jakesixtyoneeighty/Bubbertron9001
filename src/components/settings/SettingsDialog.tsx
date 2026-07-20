@@ -16,7 +16,9 @@ import { useSettingsStore } from "@/stores/settings";
 import { useAuthStore } from "@/stores/auth";
 import { useModelsStore } from "@/stores/models";
 import { cn } from "@/lib/utils";
+import { BRAND } from "@/config/brand";
 import { LogOut, Sparkles, Key, Copy, Check, X, RefreshCw, Bug } from "lucide-react";
+import { toast } from "sonner";
 
 // Debug panel to show current auth/model status
 function DebugPanel() {
@@ -81,15 +83,34 @@ function ApiKeyInput({ provider, label, placeholder }: ApiKeyInputProps) {
   const { apiKeys, setApiKey, hasApiKey } = useSettingsStore();
   const [showKey, setShowKey] = useState(false);
   const [value, setValue] = useState(apiKeys[provider] || "");
+  const [isSaving, setIsSaving] = useState(false);
   const isConfigured = hasApiKey(provider);
 
-  const handleSave = () => {
-    setApiKey(provider, value);
+  const handleSave = async () => {
+    setIsSaving(true);
+    try {
+      await setApiKey(provider, value);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not save the API key",
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
-  const handleClear = () => {
-    setValue("");
-    setApiKey(provider, "");
+  const handleClear = async () => {
+    setIsSaving(true);
+    try {
+      await setApiKey(provider, "");
+      setValue("");
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not clear the API key",
+      );
+    } finally {
+      setIsSaving(false);
+    }
   };
 
   return (
@@ -118,17 +139,29 @@ function ApiKeyInput({ provider, label, placeholder }: ApiKeyInputProps) {
           <button
             type="button"
             onClick={() => setShowKey(!showKey)}
+            aria-label={`${showKey ? "Hide" : "Show"} ${label} API key`}
             className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
           >
             <Icon name={showKey ? "eye-off" : "eye"} size="sm" />
           </button>
         </div>
         {value !== (apiKeys[provider] || "") ? (
-          <Button onClick={handleSave} size="sm" className="rounded-xl">
+          <Button
+            onClick={() => void handleSave()}
+            disabled={isSaving}
+            size="sm"
+            className="rounded-xl"
+          >
             Save
           </Button>
         ) : isConfigured ? (
-          <Button onClick={handleClear} variant="outline" size="sm" className="rounded-xl text-destructive">
+          <Button
+            onClick={() => void handleClear()}
+            disabled={isSaving}
+            variant="outline"
+            size="sm"
+            className="rounded-xl text-destructive"
+          >
             Clear
           </Button>
         ) : null}
@@ -157,28 +190,44 @@ function ChatGPTAuth() {
   // Poll for OAuth callback when logging in
   useEffect(() => {
     if (!isLoggingIn) return;
-    
-    const interval = setInterval(async () => {
+
+    let stopped = false;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
       const completed = await checkOAuthCallback();
-      if (completed) {
-        clearInterval(interval);
+      if (!stopped && !completed) {
+        pollTimer = setTimeout(poll, 1000);
       }
-    }, 1000);
-    
-    // Cleanup after 5 minutes
-    const timeout = setTimeout(() => clearInterval(interval), 5 * 60 * 1000);
+    };
+    void poll();
+
+    const timeout = setTimeout(() => {
+      stopped = true;
+      void cancelLogin();
+    }, 5 * 60 * 1000);
     
     return () => {
-      clearInterval(interval);
+      stopped = true;
+      if (pollTimer) clearTimeout(pollTimer);
       clearTimeout(timeout);
     };
-  }, [isLoggingIn, checkOAuthCallback]);
+  }, [isLoggingIn, checkOAuthCallback, cancelLogin]);
 
   const handleCopyUrl = async () => {
     if (loginUrl) {
       await navigator.clipboard.writeText(loginUrl);
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not remove credentials",
+      );
     }
   };
 
@@ -219,7 +268,7 @@ function ChatGPTAuth() {
             <Button
               variant="ghost"
               size="sm"
-              onClick={logout}
+              onClick={() => void handleLogout()}
               className="text-red-600 hover:text-red-700 hover:bg-red-50"
             >
               <LogOut className="w-4 h-4 mr-1" />
@@ -361,7 +410,7 @@ export function SettingsDialog({ children }: SettingsDialogProps) {
 
   return (
     <Dialog>
-      <DialogTrigger asChild>
+      <DialogTrigger asChild aria-label="Open settings">
         {children || (
           <Button variant="ghost" size="icon" className="rounded-xl">
             <Icon name="settings-gear" size="md" />
@@ -419,7 +468,7 @@ export function SettingsDialog({ children }: SettingsDialogProps) {
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
-              Install the Stud plugin in Roblox Studio to enable AI-powered editing.
+              Install the {BRAND.name} plugin in Roblox Studio to enable AI-powered editing.
             </p>
           </div>
 

@@ -3,6 +3,7 @@
  */
 
 import { useState, useEffect, useCallback } from "react";
+import { BRAND } from "@/config/brand";
 import {
   CommandDialog,
   CommandEmpty,
@@ -111,7 +112,7 @@ const COMMANDS = [
         id: "help-docs",
         icon: <ExternalLink className="w-4 h-4" />,
         label: "Documentation",
-        description: "Open Stud documentation",
+        description: `Open ${BRAND.name} documentation`,
       },
     ],
   },

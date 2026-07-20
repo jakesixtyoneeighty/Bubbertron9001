@@ -5,11 +5,15 @@ import {
   OAuthAuth,
   getStoredAuth,
   clearAuth,
+  clearPendingOAuth,
   startOAuthLogin,
   handleOAuthCallback,
   isAuthenticated,
 } from "@/lib/auth/codex";
 import { useModelsStore } from "./models";
+import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/config/brand";
+import { migrateStorageKey } from "@/lib/storage";
+import { authenticatedLocalFetch } from "@/lib/local-bridge";
 
 export type AuthMethod = "api_key" | "oauth";
 
@@ -27,12 +31,27 @@ interface AuthState {
   setAuthMethod: (method: AuthMethod) => void;
   startLogin: () => Promise<void>;
   completeLogin: (code: string, state: string) => Promise<void>;
-  logout: () => void;
+  logout: () => Promise<void>;
   checkOAuthCallback: () => Promise<boolean>;
-  cancelLogin: () => void;
+  cancelLogin: () => Promise<void>;
 
   // Getters
   isOAuthAuthenticated: () => boolean;
+}
+
+migrateStorageKey(LEGACY_STORAGE_KEYS.authStore, STORAGE_KEYS.authStore);
+
+const OAUTH_CALLBACK_BASE = "http://localhost:1455/auth";
+let callbackCheckPromise: Promise<boolean> | null = null;
+
+async function clearOAuthCallbackServer() {
+  try {
+    await authenticatedLocalFetch(`${OAUTH_CALLBACK_BASE}/clear`, {
+      method: "POST",
+    });
+  } catch {
+    // The callback server may not be ready yet; local PKCE state is still reset.
+  }
 }
 
 export const useAuthStore = create<AuthState>()(
@@ -51,6 +70,8 @@ export const useAuthStore = create<AuthState>()(
       startLogin: async () => {
         set({ isLoggingIn: true, loginError: null, loginUrl: null });
         try {
+          clearPendingOAuth();
+          await clearOAuthCallbackServer();
           const { url } = await startOAuthLogin();
           // Store the URL for fallback display
           set({ loginUrl: url });
@@ -64,7 +85,9 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      cancelLogin: () => {
+      cancelLogin: async () => {
+        clearPendingOAuth();
+        await clearOAuthCallbackServer();
         set({ isLoggingIn: false, loginUrl: null, loginError: null });
       },
 
@@ -80,6 +103,7 @@ export const useAuthStore = create<AuthState>()(
           // Fetch models after successful login
           useModelsStore.getState().fetchModels();
         } catch (error) {
+          clearPendingOAuth();
           set({ 
             loginError: error instanceof Error ? error.message : String(error),
             isLoggingIn: false 
@@ -88,8 +112,8 @@ export const useAuthStore = create<AuthState>()(
         }
       },
 
-      logout: () => {
-        clearAuth();
+      logout: async () => {
+        await clearAuth();
         // Clear cached models on logout
         useModelsStore.getState().clearModels();
         set({
@@ -100,28 +124,40 @@ export const useAuthStore = create<AuthState>()(
       },
 
       checkOAuthCallback: async () => {
+        if (callbackCheckPromise) return callbackCheckPromise;
+
         // Poll the OAuth callback server for pending auth data
-        try {
-          const response = await fetch("http://localhost:1455/auth/poll");
-          if (!response.ok) return false;
-          
-          const data = await response.json();
-          if (!data.pending) return false;
-          
-          const { code, state } = data;
-          
-          // Clear the callback data from the server
-          await fetch("http://localhost:1455/auth/clear", { method: "POST" });
-          
-          if (code && state) {
-            await get().completeLogin(code, state);
-            return true;
+        callbackCheckPromise = (async () => {
+          try {
+            const response = await authenticatedLocalFetch(
+              `${OAUTH_CALLBACK_BASE}/poll`,
+            );
+            if (!response.ok) return false;
+
+            const data = await response.json();
+            if (!data.pending) return false;
+
+            const { code, state } = data;
+
+            // Consume the one-time callback before exchanging it so overlapping
+            // pollers can never exchange the same authorization code.
+            await clearOAuthCallbackServer();
+            if (code && state) {
+              await get().completeLogin(code, state);
+              return true;
+            }
+            clearPendingOAuth();
+          } catch (error) {
+            console.debug("[OAuth] Poll failed:", error);
           }
-        } catch (error) {
-          // Server not running or network error - ignore
-          console.debug("[OAuth] Poll failed:", error);
+          return false;
+        })();
+
+        try {
+          return await callbackCheckPromise;
+        } finally {
+          callbackCheckPromise = null;
         }
-        return false;
       },
 
       isOAuthAuthenticated: () => {
@@ -131,28 +167,10 @@ export const useAuthStore = create<AuthState>()(
       },
     }),
     {
-      name: "stud-auth",
+      name: STORAGE_KEYS.authStore,
       partialize: (state) => ({ 
         authMethod: state.authMethod,
       }),
     }
   )
 );
-
-// Poll for OAuth callback completion
-export function useOAuthCallbackPoller() {
-  const { checkOAuthCallback, isLoggingIn } = useAuthStore();
-  
-  // Check periodically while logging in
-  if (typeof window !== "undefined" && isLoggingIn) {
-    const interval = setInterval(async () => {
-      const completed = await checkOAuthCallback();
-      if (completed) {
-        clearInterval(interval);
-      }
-    }, 1000);
-    
-    // Cleanup after 5 minutes
-    setTimeout(() => clearInterval(interval), 5 * 60 * 1000);
-  }
-}

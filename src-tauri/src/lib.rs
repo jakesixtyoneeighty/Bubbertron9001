@@ -2,19 +2,9 @@
 
 mod bridge;
 mod plugin;
+mod secrets;
 
 use std::thread;
-
-#[tauri::command]
-fn greet(name: &str) -> String {
-    format!("Hello, {}! You've been greeted from Rust!", name)
-}
-
-#[tauri::command]
-fn get_bridge_status() -> String {
-    // This could be enhanced to return actual status
-    "running".to_string()
-}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -28,12 +18,15 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_http::init())
         .invoke_handler(tauri::generate_handler![
-            greet,
-            get_bridge_status,
             plugin::check_plugin_installed,
             plugin::install_plugin,
             plugin::get_plugins_path,
-            plugin::check_roblox_studio_installed
+            plugin::check_roblox_studio_installed,
+            plugin::get_bridge_auth_token,
+            plugin::get_paired_plugin_source,
+            secrets::secret_get,
+            secrets::secret_set,
+            secrets::secret_delete
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

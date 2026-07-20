@@ -60,16 +60,16 @@ export const providers = {
   openai: {
     name: "OpenAI",
     models: [
-      { id: "gpt-4o", name: "GPT-4o", description: "Most capable model" },
-      { id: "gpt-4o-mini", name: "GPT-4o Mini", description: "Fast and affordable" },
-      { id: "gpt-4-turbo", name: "GPT-4 Turbo", description: "Previous generation" },
+      { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", description: "Most capable model" },
+      { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", description: "Balanced capability and speed" },
+      { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", description: "Fast and efficient" },
     ],
   },
   anthropic: {
     name: "Anthropic",
     models: [
-      { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", description: "Best for coding" },
-      { id: "claude-3-5-haiku-20241022", name: "Claude 3.5 Haiku", description: "Fast and efficient" },
+      { id: "claude-sonnet-5", name: "Claude Sonnet 5", description: "Fast, capable coding" },
+      { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", description: "Fast and efficient" },
     ],
   },
 } as const;

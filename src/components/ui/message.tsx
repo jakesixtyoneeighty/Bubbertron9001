@@ -6,7 +6,13 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { cn } from "@/lib/utils"
-import { Markdown } from "./markdown"
+import { lazy, Suspense } from "react"
+import type { MarkdownProps } from "./markdown"
+
+const Markdown = lazy(async () => {
+  const module = await import("./markdown")
+  return { default: module.Markdown }
+})
 
 export type MessageProps = {
   children: React.ReactNode
@@ -48,7 +54,7 @@ export type MessageContentProps = {
   children: React.ReactNode
   markdown?: boolean
   className?: string
-} & React.ComponentProps<typeof Markdown> &
+} & MarkdownProps &
   React.HTMLProps<HTMLDivElement>
 
 const MessageContent = ({
@@ -63,9 +69,11 @@ const MessageContent = ({
   )
 
   return markdown ? (
-    <Markdown className={classNames} {...props}>
-      {children as string}
-    </Markdown>
+    <Suspense fallback={<div className={classNames}>{children}</div>}>
+      <Markdown className={classNames} {...props}>
+        {children as string}
+      </Markdown>
+    </Suspense>
   ) : (
     <div className={classNames} {...props}>
       {children}

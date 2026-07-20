@@ -1,27 +1,39 @@
-//! Bridge Server for Stud <-> Roblox Studio Plugin Communication
+//! Bridge server for Bubberton9001 <-> Roblox Studio plugin communication.
 //!
 //! The Roblox Studio plugin cannot receive incoming HTTP requests, only make them.
 //! This bridge server acts as an intermediary:
 //!
-//! 1. Stud tools POST requests to /stud/request
-//! 2. Studio plugin polls /stud/poll for pending requests
-//! 3. Studio plugin responds to /stud/respond with results
+//! 1. Bubberton9001 tools POST requests to `/bubberton9001/request`
+//! 2. Studio plugin polls `/bubberton9001/poll` for pending requests
+//! 3. Studio plugin responds to `/bubberton9001/respond` with results
 //! 4. The original request resolves with the result
+//!
+//! The legacy `/stud/*` endpoints remain aliases during migration.
 
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::net::{Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::sync::oneshot;
 use warp::Filter;
-use bytes::Bytes;
-use futures_util::StreamExt;
 
 const BRIDGE_PORT: u16 = 3001;
 const OAUTH_PORT: u16 = 1455;
+const OAUTH_CALLBACK_TTL_MS: u64 = 5 * 60 * 1000;
+const MAX_OAUTH_CODE_BYTES: usize = 16 * 1024;
+const MAX_OAUTH_STATE_BYTES: usize = 1024;
+const STUDIO_SESSION_TIMEOUT_SECS: u64 = 20;
 const REQUEST_TIMEOUT_SECS: u64 = 15;
+const MAX_PENDING_REQUESTS: usize = 64;
+const MAX_BRIDGE_REQUEST_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_BRIDGE_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_SESSION_CONTROL_BYTES: u64 = 4 * 1024;
+const MAX_REQUEST_PATH_BYTES: usize = 256;
+const MAX_REQUEST_ID_BYTES: usize = 128;
+const MAX_SESSION_ID_BYTES: usize = 128;
+const PAIRING_SECRET_HEADER: &str = "x-bubberton9001-secret";
 
 // Global storage for OAuth callback data
 lazy_static::lazy_static! {
@@ -51,11 +63,25 @@ pub struct StudioResponse {
 pub struct PollResponse {
     pub id: Option<String>,
     pub request: Option<StudioRequest>,
+    pub session_conflict: bool,
+    pub pairing_error: bool,
+    pub message: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PollQuery {
+    pub session_id: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SessionRequest {
+    pub session_id: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RespondRequest {
     pub id: String,
+    pub session_id: String,
     pub response: StudioResponse,
 }
 
@@ -70,42 +96,161 @@ struct PendingRequest {
     request: StudioRequest,
     sender: oneshot::Sender<StudioResponse>,
     timestamp: Instant,
+    leased_session_id: Option<String>,
+}
+
+struct ActiveStudioSession {
+    id: String,
+    last_seen: Instant,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum CompleteRequestError {
+    NotFound,
+    NotLeased,
+    WrongSession,
 }
 
 struct BridgeState {
     pending_requests: HashMap<String, PendingRequest>,
-    request_counter: u64,
-    last_poll_time: Instant,
+    request_queue: VecDeque<String>,
+    active_session: Option<ActiveStudioSession>,
 }
 
 impl BridgeState {
     fn new() -> Self {
         Self {
             pending_requests: HashMap::new(),
-            request_counter: 0,
-            last_poll_time: Instant::now() - Duration::from_secs(10),
+            request_queue: VecDeque::new(),
+            active_session: None,
         }
     }
 
-    fn generate_id(&mut self) -> String {
-        self.request_counter += 1;
-        format!("req_{}_{}", self.request_counter, chrono_lite_timestamp())
+    fn is_connected(&self) -> bool {
+        self.active_session.is_some()
     }
 
-    fn is_connected(&self) -> bool {
-        self.last_poll_time.elapsed() < Duration::from_secs(2)
+    fn last_poll_elapsed_ms(&self) -> u64 {
+        self.active_session
+            .as_ref()
+            .map(|session| session.last_seen.elapsed().as_millis() as u64)
+            .unwrap_or(STUDIO_SESSION_TIMEOUT_SECS * 1000)
+    }
+
+    fn admit_session(&mut self, session_id: &str) -> bool {
+        self.expire_active_session();
+
+        match self.active_session.as_mut() {
+            Some(active) if active.id == session_id => {
+                active.last_seen = Instant::now();
+                true
+            }
+            Some(_) => false,
+            None => {
+                self.active_session = Some(ActiveStudioSession {
+                    id: session_id.to_string(),
+                    last_seen: Instant::now(),
+                });
+                true
+            }
+        }
+    }
+
+    fn expire_active_session(&mut self) {
+        let timeout = Duration::from_secs(STUDIO_SESSION_TIMEOUT_SECS);
+        if self
+            .active_session
+            .as_ref()
+            .is_some_and(|session| session.last_seen.elapsed() >= timeout)
+        {
+            self.active_session = None;
+        }
+    }
+
+    fn release_session(&mut self, session_id: &str) -> bool {
+        if self
+            .active_session
+            .as_ref()
+            .is_some_and(|active| active.id == session_id)
+        {
+            self.active_session = None;
+            true
+        } else {
+            false
+        }
+    }
+
+    fn enqueue(
+        &mut self,
+        request: StudioRequest,
+        sender: oneshot::Sender<StudioResponse>,
+    ) -> Option<String> {
+        self.cleanup_stale();
+        if self.pending_requests.len() >= MAX_PENDING_REQUESTS {
+            return None;
+        }
+
+        let id = format!("req_{}", uuid::Uuid::new_v4());
+        self.pending_requests.insert(
+            id.clone(),
+            PendingRequest {
+                request,
+                sender,
+                timestamp: Instant::now(),
+                leased_session_id: None,
+            },
+        );
+        self.request_queue.push_back(id.clone());
+        Some(id)
+    }
+
+    /// Lease each request at most once. A missing response is allowed to time out rather
+    /// than risking a repeated mutation in Studio.
+    fn lease_next(&mut self, session_id: &str) -> Option<(String, StudioRequest)> {
+        self.cleanup_stale();
+
+        while let Some(id) = self.request_queue.pop_front() {
+            if let Some(pending) = self.pending_requests.get_mut(&id) {
+                if pending.leased_session_id.is_none() {
+                    pending.leased_session_id = Some(session_id.to_string());
+                    return Some((id, pending.request.clone()));
+                }
+            }
+        }
+
+        None
+    }
+
+    fn complete_request(
+        &mut self,
+        request_id: &str,
+        session_id: &str,
+    ) -> Result<PendingRequest, CompleteRequestError> {
+        let pending = self
+            .pending_requests
+            .get(request_id)
+            .ok_or(CompleteRequestError::NotFound)?;
+
+        match pending.leased_session_id.as_deref() {
+            None => return Err(CompleteRequestError::NotLeased),
+            Some(owner) if owner != session_id => {
+                return Err(CompleteRequestError::WrongSession);
+            }
+            Some(_) => {}
+        }
+
+        self.pending_requests
+            .remove(request_id)
+            .ok_or(CompleteRequestError::NotFound)
     }
 
     fn cleanup_stale(&mut self) {
+        self.expire_active_session();
         let timeout = Duration::from_secs(REQUEST_TIMEOUT_SECS);
-        self.pending_requests.retain(|_, pending| {
-            if pending.timestamp.elapsed() > timeout {
-                // Request timed out - sender will be dropped
-                false
-            } else {
-                true
-            }
-        });
+        self.pending_requests
+            .retain(|_, pending| pending.timestamp.elapsed() <= timeout);
+        self.request_queue
+            .retain(|id| self.pending_requests.contains_key(id));
     }
 }
 
@@ -116,6 +261,44 @@ fn chrono_lite_timestamp() -> u64 {
         .as_millis() as u64
 }
 
+fn oauth_callback_is_fresh(callback: &OAuthCallbackData, now_ms: u64) -> bool {
+    now_ms.saturating_sub(callback.timestamp) < OAUTH_CALLBACK_TTL_MS
+}
+
+fn valid_oauth_callback(code: &str, state: &str) -> bool {
+    !code.is_empty()
+        && code.len() <= MAX_OAUTH_CODE_BYTES
+        && !state.is_empty()
+        && state.len() <= MAX_OAUTH_STATE_BYTES
+}
+
+fn valid_session_id(session_id: &str) -> bool {
+    !session_id.is_empty()
+        && session_id.len() <= MAX_SESSION_ID_BYTES
+        && session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn pairing_secret_matches(provided: Option<&str>) -> bool {
+    let Some(provided) = provided else {
+        return false;
+    };
+    let expected = crate::plugin::pairing_secret().as_bytes();
+    let provided = provided.as_bytes();
+    if provided.len() != expected.len() {
+        return false;
+    }
+
+    provided
+        .iter()
+        .zip(expected)
+        .fold(0_u8, |difference, (left, right)| {
+            difference | (left ^ right)
+        })
+        == 0
+}
+
 type SharedState = Arc<Mutex<BridgeState>>;
 
 fn with_state(
@@ -124,85 +307,264 @@ fn with_state(
     warp::any().map(move || state.clone())
 }
 
+fn bridge_namespace() -> impl Filter<Extract = (), Error = warp::Rejection> + Clone {
+    warp::path("bubberton9001").or(warp::path("stud")).unify()
+}
+
 fn cors() -> warp::cors::Builder {
     warp::cors()
-        .allow_any_origin()
+        .allow_origins([
+            "tauri://localhost",
+            "http://tauri.localhost",
+            "https://tauri.localhost",
+            "http://localhost:1430",
+            "http://127.0.0.1:1430",
+            "http://[::1]:1430",
+        ])
         .allow_methods(vec!["GET", "POST", "OPTIONS"])
-        .allow_headers(vec!["Content-Type", "Authorization", "ChatGPT-Account-Id"])
+        .allow_headers(vec![
+            "Content-Type",
+            "Authorization",
+            "ChatGPT-Account-Id",
+            "X-Bubberton9001-Secret",
+        ])
+}
+
+fn status_reply(
+    provided_secret: Option<String>,
+    state: SharedState,
+) -> warp::reply::WithStatus<warp::reply::Json> {
+    if !pairing_secret_matches(provided_secret.as_deref()) {
+        return warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"error": "Bridge authentication failed"})),
+            warp::http::StatusCode::UNAUTHORIZED,
+        );
+    }
+
+    let mut state = state.lock();
+    state.cleanup_stale();
+    let response = StatusResponse {
+        connected: state.is_connected(),
+        pending_requests: state.pending_requests.len(),
+        last_poll_time: state.last_poll_elapsed_ms(),
+    };
+    warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK)
 }
 
 pub async fn start_bridge_server() {
     let state: SharedState = Arc::new(Mutex::new(BridgeState::new()));
 
     // Status endpoint
-    let status = warp::path!("stud" / "status")
+    let status = bridge_namespace()
+        .and(warp::path("status"))
+        .and(warp::path::end())
         .and(warp::get())
+        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
         .and(with_state(state.clone()))
-        .map(|state: SharedState| {
-            let state = state.lock();
-            let response = StatusResponse {
-                connected: state.is_connected(),
-                pending_requests: state.pending_requests.len(),
-                last_poll_time: state.last_poll_time.elapsed().as_millis() as u64,
-            };
-            warp::reply::json(&response)
-        });
+        .map(status_reply);
 
-    // Request endpoint - Stud sends requests here
-    let request = warp::path!("stud" / "request")
+    // Request endpoint - Bubberton9001 sends requests here
+    let request = bridge_namespace()
+        .and(warp::path("request"))
+        .and(warp::path::end())
         .and(warp::post())
+        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(warp::body::content_length_limit(MAX_BRIDGE_REQUEST_BYTES))
         .and(warp::body::json())
         .and(with_state(state.clone()))
         .and_then(handle_request);
 
     // Poll endpoint - Studio plugin polls here
-    let poll = warp::path!("stud" / "poll")
+    let poll = bridge_namespace()
+        .and(warp::path("poll"))
+        .and(warp::path::end())
         .and(warp::get())
+        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(warp::query::<PollQuery>())
         .and(with_state(state.clone()))
-        .map(|state: SharedState| {
-            let mut state = state.lock();
-            state.last_poll_time = Instant::now();
+        .map(
+            |provided_secret: Option<String>, query: PollQuery, state: SharedState| {
+                if !pairing_secret_matches(provided_secret.as_deref()) {
+                    return warp::reply::with_status(
+                        warp::reply::json(&PollResponse {
+                            id: None,
+                            request: None,
+                            session_conflict: false,
+                            pairing_error: true,
+                            message: Some(
+                                "Studio plugin pairing failed. Reinstall it from Bubberton9001."
+                                    .to_string(),
+                            ),
+                        }),
+                        warp::http::StatusCode::UNAUTHORIZED,
+                    );
+                }
 
-            // Return first pending request if any
-            if let Some((id, pending)) = state.pending_requests.iter().next() {
-                let response = PollResponse {
-                    id: Some(id.clone()),
-                    request: Some(pending.request.clone()),
+                let mut state = state.lock();
+
+                if !valid_session_id(&query.session_id) {
+                    return warp::reply::with_status(
+                        warp::reply::json(&PollResponse {
+                            id: None,
+                            request: None,
+                            session_conflict: true,
+                            pairing_error: false,
+                            message: Some("Invalid Studio session ID.".to_string()),
+                        }),
+                        warp::http::StatusCode::BAD_REQUEST,
+                    );
+                }
+
+                if !state.admit_session(&query.session_id) {
+                    return warp::reply::with_status(
+                        warp::reply::json(&PollResponse {
+                            id: None,
+                            request: None,
+                            session_conflict: true,
+                            pairing_error: false,
+                            message: Some(
+                                "Another Roblox Studio window is connected to Bubberton9001."
+                                    .to_string(),
+                            ),
+                        }),
+                        warp::http::StatusCode::OK,
+                    );
+                }
+
+                let response = if let Some((id, request)) = state.lease_next(&query.session_id) {
+                    PollResponse {
+                        id: Some(id),
+                        request: Some(request),
+                        session_conflict: false,
+                        pairing_error: false,
+                        message: None,
+                    }
+                } else {
+                    PollResponse {
+                        id: None,
+                        request: None,
+                        session_conflict: false,
+                        pairing_error: false,
+                        message: None,
+                    }
                 };
-                warp::reply::json(&response)
-            } else {
-                let response = PollResponse {
-                    id: None,
-                    request: None,
-                };
-                warp::reply::json(&response)
-            }
-        });
+
+                warp::reply::with_status(warp::reply::json(&response), warp::http::StatusCode::OK)
+            },
+        );
 
     // Respond endpoint - Studio plugin responds here
-    let respond = warp::path!("stud" / "respond")
+    let respond = bridge_namespace()
+        .and(warp::path("respond"))
+        .and(warp::path::end())
         .and(warp::post())
+        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(warp::body::content_length_limit(MAX_BRIDGE_RESPONSE_BYTES))
         .and(warp::body::json())
         .and(with_state(state.clone()))
-        .map(|body: RespondRequest, state: SharedState| {
+        .map(
+            |provided_secret: Option<String>, body: RespondRequest, state: SharedState| {
+                if !pairing_secret_matches(provided_secret.as_deref()) {
+                    return warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({"error": "Plugin pairing failed"})),
+                        warp::http::StatusCode::UNAUTHORIZED,
+                    );
+                }
+
+            if body.id.is_empty() || body.id.len() > MAX_REQUEST_ID_BYTES {
+                return warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "Invalid request ID"})),
+                    warp::http::StatusCode::BAD_REQUEST,
+                );
+            }
+            if !valid_session_id(&body.session_id) {
+                return warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "Invalid Studio session ID"})),
+                    warp::http::StatusCode::BAD_REQUEST,
+                );
+            }
+            if !(100..=599).contains(&body.response.status) {
+                return warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "Invalid response status"})),
+                    warp::http::StatusCode::BAD_REQUEST,
+                );
+            }
+
             let mut state = state.lock();
 
-            if let Some(pending) = state.pending_requests.remove(&body.id) {
-                let _ = pending.sender.send(body.response);
-                warp::reply::json(&serde_json::json!({"ok": true}))
-            } else {
-                warp::reply::json(&serde_json::json!({"error": "Request not found"}))
+            match state.complete_request(&body.id, &body.session_id) {
+                Ok(pending) => {
+                    let _ = pending.sender.send(body.response);
+                    warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({"ok": true})),
+                        warp::http::StatusCode::OK,
+                    )
+                }
+                Err(CompleteRequestError::NotFound) => warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "Request not found"})),
+                    warp::http::StatusCode::NOT_FOUND,
+                ),
+                Err(CompleteRequestError::NotLeased) => warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"error": "Request has not been leased"})),
+                    warp::http::StatusCode::CONFLICT,
+                ),
+                Err(CompleteRequestError::WrongSession) => warp::reply::with_status(
+                    warp::reply::json(
+                        &serde_json::json!({"error": "Request belongs to another Studio session"}),
+                    ),
+                    warp::http::StatusCode::CONFLICT,
+                ),
             }
-        });
+            },
+        );
+
+    // Let an explicitly disconnected Studio window release ownership immediately.
+    let disconnect = bridge_namespace()
+        .and(warp::path("disconnect"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(warp::body::content_length_limit(MAX_SESSION_CONTROL_BYTES))
+        .and(warp::body::json())
+        .and(with_state(state.clone()))
+        .map(
+            |provided_secret: Option<String>, body: SessionRequest, state: SharedState| {
+                if !pairing_secret_matches(provided_secret.as_deref()) {
+                    return warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({"error": "Plugin pairing failed"})),
+                        warp::http::StatusCode::UNAUTHORIZED,
+                    );
+                }
+
+                if !valid_session_id(&body.session_id) {
+                    return warp::reply::with_status(
+                        warp::reply::json(
+                            &serde_json::json!({"error": "Invalid Studio session ID"}),
+                        ),
+                        warp::http::StatusCode::BAD_REQUEST,
+                    );
+                }
+
+                let released = state.lock().release_session(&body.session_id);
+                warp::reply::with_status(
+                    warp::reply::json(&serde_json::json!({"released": released})),
+                    warp::http::StatusCode::OK,
+                )
+            },
+        );
 
     let routes = status
         .or(request)
         .or(poll)
         .or(respond)
+        .or(disconnect)
         .with(cors());
 
-    println!("[Stud Bridge] Starting on http://localhost:{}", BRIDGE_PORT);
-    println!("[Stud Bridge] Waiting for stud-bridge plugin to connect...");
+    println!(
+        "[Bubberton9001 Bridge] Starting on http://localhost:{}",
+        BRIDGE_PORT
+    );
+    println!("[Bubberton9001 Bridge] Waiting for the Studio plugin to connect...");
 
     // Spawn cleanup task
     let cleanup_state = state.clone();
@@ -218,12 +580,7 @@ pub async fn start_bridge_server() {
         start_oauth_server().await;
     });
 
-    // Spawn Codex API proxy server
-    tokio::spawn(async move {
-        start_codex_proxy().await;
-    });
-
-    // Try to bind, if port is in use, assume bridge is already running
+    // Never trust an existing listener: it may be an unrelated or malicious process.
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, BRIDGE_PORT));
     match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => {
@@ -232,8 +589,8 @@ pub async fn start_bridge_server() {
                 .await;
         }
         Err(e) => {
-            println!(
-                "[Stud Bridge] Port {} already in use ({}), assuming bridge is already running",
+            eprintln!(
+                "[Bubberton9001 Bridge] Could not bind port {} ({}); refusing to trust the unknown listener",
                 BRIDGE_PORT, e
             );
         }
@@ -241,34 +598,53 @@ pub async fn start_bridge_server() {
 }
 
 async fn handle_request(
+    provided_secret: Option<String>,
     body: StudioRequest,
     state: SharedState,
 ) -> Result<impl warp::Reply, warp::Rejection> {
+    if !pairing_secret_matches(provided_secret.as_deref()) {
+        return Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"error": "Bridge authentication failed"})),
+            warp::http::StatusCode::UNAUTHORIZED,
+        ));
+    }
+
+    if body.path.is_empty()
+        || !body.path.starts_with('/')
+        || body.path.len() > MAX_REQUEST_PATH_BYTES
+    {
+        return Ok(warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"error": "Invalid request path"})),
+            warp::http::StatusCode::BAD_REQUEST,
+        ));
+    }
+
     let (sender, receiver) = oneshot::channel();
 
     let id = {
         let mut state = state.lock();
-        state.cleanup_stale();
-        let id = state.generate_id();
-        state.pending_requests.insert(
-            id.clone(),
-            PendingRequest {
-                request: body,
-                sender,
-                timestamp: Instant::now(),
-            },
-        );
-        id
+        match state.enqueue(body, sender) {
+            Some(id) => id,
+            None => {
+                return Ok(warp::reply::with_status(
+                    warp::reply::json(
+                        &serde_json::json!({"error": "Studio request queue is full"}),
+                    ),
+                    warp::http::StatusCode::TOO_MANY_REQUESTS,
+                ));
+            }
+        }
     };
 
     // Wait for response with timeout
     match tokio::time::timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS), receiver).await {
-        Ok(Ok(response)) => {
-            Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::from_str::<serde_json::Value>(&response.body).unwrap_or(serde_json::json!({"raw": response.body}))),
-                warp::http::StatusCode::from_u16(response.status).unwrap_or(warp::http::StatusCode::OK),
-            ))
-        }
+        Ok(Ok(response)) => Ok(warp::reply::with_status(
+            warp::reply::json(
+                &serde_json::from_str::<serde_json::Value>(&response.body)
+                    .unwrap_or(serde_json::json!({"raw": response.body})),
+            ),
+            warp::http::StatusCode::from_u16(response.status).unwrap_or(warp::http::StatusCode::OK),
+        )),
         Ok(Err(_)) => {
             // Channel closed
             state.lock().pending_requests.remove(&id);
@@ -281,57 +657,60 @@ async fn handle_request(
             // Timeout
             state.lock().pending_requests.remove(&id);
             Ok(warp::reply::with_status(
-                warp::reply::json(&serde_json::json!({"error": "Request timed out waiting for Studio response"})),
+                warp::reply::json(
+                    &serde_json::json!({"error": "Request timed out waiting for Studio response"}),
+                ),
                 warp::http::StatusCode::GATEWAY_TIMEOUT,
             ))
         }
     }
 }
 
-/// OAuth callback server for ChatGPT Plus/Pro authentication
-async fn start_oauth_server() {
-    // OAuth callback endpoint - stores auth code in memory for frontend to poll
-    let callback = warp::path!("auth" / "callback")
-        .and(warp::get())
-        .and(warp::query::<std::collections::HashMap<String, String>>())
-        .map(|params: std::collections::HashMap<String, String>| {
-            let code = params.get("code").cloned().unwrap_or_default();
-            let state = params.get("state").cloned().unwrap_or_default();
-            let error = params.get("error").cloned();
-            
-            if let Some(err) = error {
-                // OAuth error - show error page
-                let html = format!(r#"<!DOCTYPE html>
+fn oauth_failure_html(_provider_error: &str) -> &'static str {
+    r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Authentication Failed</title>
     <style>
-        body {{ font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #fafafa; }}
-        .card {{ background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }}
-        h1 {{ color: #ef4444; margin-bottom: 0.5rem; }}
-        p {{ color: #666; }}
+        body { font-family: system-ui, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; background: #fafafa; }
+        .card { background: white; padding: 2rem; border-radius: 1rem; box-shadow: 0 4px 20px rgba(0,0,0,0.1); text-align: center; max-width: 400px; }
+        h1 { color: #ef4444; margin-bottom: 0.5rem; }
+        p { color: #666; }
     </style>
 </head>
 <body>
     <div class="card">
         <h1>Authentication Failed</h1>
-        <p>{}</p>
+        <p>Sign-in could not be completed.</p>
         <p>You can close this window and try again.</p>
     </div>
 </body>
-</html>"#, err);
-                warp::reply::html(html)
-            } else {
-                // Store the callback data in memory for the frontend to poll
-                let callback_data = OAuthCallbackData {
-                    code: code.clone(),
-                    state: state.clone(),
-                    timestamp: chrono_lite_timestamp(),
-                };
-                *OAUTH_CALLBACK_DATA.lock() = Some(callback_data);
-                
-                // Success - show checkmark and success message
-                let html = r#"<!DOCTYPE html>
+</html>"#
+}
+
+fn oauth_callback_reply(
+    params: std::collections::HashMap<String, String>,
+) -> warp::reply::Html<String> {
+    let code = params.get("code").cloned().unwrap_or_default();
+    let state = params.get("state").cloned().unwrap_or_default();
+
+    if let Some(provider_error) = params.get("error") {
+        // Never render the provider-controlled error query value as HTML.
+        *OAUTH_CALLBACK_DATA.lock() = None;
+        return warp::reply::html(oauth_failure_html(provider_error).to_string());
+    }
+    if !valid_oauth_callback(&code, &state) {
+        *OAUTH_CALLBACK_DATA.lock() = None;
+        return warp::reply::html(oauth_failure_html("invalid_callback").to_string());
+    }
+
+    *OAUTH_CALLBACK_DATA.lock() = Some(OAuthCallbackData {
+        code,
+        state,
+        timestamp: chrono_lite_timestamp(),
+    });
+
+    let html = r#"<!DOCTYPE html>
 <html>
 <head>
     <title>Authentication Successful</title>
@@ -357,139 +736,338 @@ async fn start_oauth_server() {
     </div>
 </body>
 </html>"#;
-                warp::reply::html(html.to_string())
-            }
-        });
-    
+    warp::reply::html(html.to_string())
+}
+
+fn oauth_poll_reply(provided_secret: Option<String>) -> warp::reply::WithStatus<warp::reply::Json> {
+    if !pairing_secret_matches(provided_secret.as_deref()) {
+        return warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"error": "Bridge authentication failed"})),
+            warp::http::StatusCode::UNAUTHORIZED,
+        );
+    }
+
+    let mut data = OAUTH_CALLBACK_DATA.lock();
+    if data
+        .as_ref()
+        .is_some_and(|callback| !oauth_callback_is_fresh(callback, chrono_lite_timestamp()))
+    {
+        *data = None;
+    }
+
+    let body = if let Some(ref callback_data) = *data {
+        serde_json::json!({
+            "pending": true,
+            "code": callback_data.code,
+            "state": callback_data.state
+        })
+    } else {
+        serde_json::json!({"pending": false})
+    };
+    warp::reply::with_status(warp::reply::json(&body), warp::http::StatusCode::OK)
+}
+
+fn oauth_clear_reply(
+    provided_secret: Option<String>,
+) -> warp::reply::WithStatus<warp::reply::Json> {
+    if !pairing_secret_matches(provided_secret.as_deref()) {
+        return warp::reply::with_status(
+            warp::reply::json(&serde_json::json!({"error": "Bridge authentication failed"})),
+            warp::http::StatusCode::UNAUTHORIZED,
+        );
+    }
+
+    *OAUTH_CALLBACK_DATA.lock() = None;
+    warp::reply::with_status(
+        warp::reply::json(&serde_json::json!({"ok": true})),
+        warp::http::StatusCode::OK,
+    )
+}
+
+/// OAuth callback server for ChatGPT Plus/Pro authentication
+async fn start_oauth_server() {
+    // OAuth callback endpoint - stores auth code in memory for frontend to poll
+    let callback = warp::path!("auth" / "callback")
+        .and(warp::get())
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .map(oauth_callback_reply);
+
     // Poll endpoint - frontend polls this to get the OAuth callback data
     let poll = warp::path!("auth" / "poll")
         .and(warp::get())
-        .map(|| {
-            let data = OAUTH_CALLBACK_DATA.lock();
-            if let Some(ref callback_data) = *data {
-                warp::reply::json(&serde_json::json!({
-                    "pending": true,
-                    "code": callback_data.code,
-                    "state": callback_data.state
-                }))
-            } else {
-                warp::reply::json(&serde_json::json!({
-                    "pending": false
-                }))
-            }
-        });
-    
+        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .map(oauth_poll_reply);
+
     // Clear endpoint - frontend calls this after successfully processing the callback
     let clear = warp::path!("auth" / "clear")
         .and(warp::post())
-        .map(|| {
-            *OAUTH_CALLBACK_DATA.lock() = None;
-            warp::reply::json(&serde_json::json!({ "ok": true }))
-        });
+        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .map(oauth_clear_reply);
 
     let oauth_routes = callback.or(poll).or(clear).with(cors());
 
     let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, OAUTH_PORT));
     match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => {
-            println!("[Stud OAuth] Callback server on http://localhost:{}", OAUTH_PORT);
+            println!(
+                "[Bubberton9001 OAuth] Callback server on http://localhost:{}",
+                OAUTH_PORT
+            );
             warp::serve(oauth_routes)
                 .run_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
                 .await;
         }
         Err(e) => {
-            println!("[Stud OAuth] Port {} already in use ({})", OAUTH_PORT, e);
+            println!(
+                "[Bubberton9001 OAuth] Port {} already in use ({})",
+                OAUTH_PORT, e
+            );
         }
     }
 }
 
-const CODEX_PROXY_PORT: u16 = 3002;
-const CODEX_API_ENDPOINT: &str = "https://chatgpt.com/backend-api/codex/responses";
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use warp::Reply;
 
-/// Codex API proxy - bypasses CORS by proxying requests through the Rust backend
-async fn start_codex_proxy() {
-    let client = reqwest::Client::new();
+    lazy_static::lazy_static! {
+        static ref OAUTH_TEST_LOCK: Mutex<()> = Mutex::new(());
+    }
 
-    // Proxy endpoint for Codex API calls with streaming support
-    let proxy = warp::path!("codex" / "responses")
-        .and(warp::post())
-        .and(warp::header::optional::<String>("authorization"))
-        .and(warp::header::optional::<String>("chatgpt-account-id"))
-        .and(warp::body::bytes())
-        .and_then(move |auth: Option<String>, account_id: Option<String>, body: Bytes| {
-            let client = client.clone();
-            async move {
-                // Build the request to Codex API
-                let mut req = client
-                    .post(CODEX_API_ENDPOINT)
-                    .header("Content-Type", "application/json")
-                    .body(body.to_vec());
-
-                // Forward authorization header
-                if let Some(auth_header) = auth {
-                    req = req.header("Authorization", auth_header);
-                }
-
-                // Forward ChatGPT Account ID if present
-                if let Some(acc_id) = account_id {
-                    req = req.header("ChatGPT-Account-Id", acc_id);
-                }
-
-                // Execute request and stream response back
-                match req.send().await {
-                    Ok(response) => {
-                        let status = response.status();
-
-                        if !status.is_success() {
-                            let error_body = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-                            let res = warp::http::Response::builder()
-                                .status(warp::http::StatusCode::from_u16(status.as_u16())
-                                    .unwrap_or(warp::http::StatusCode::INTERNAL_SERVER_ERROR))
-                                .header("Content-Type", "text/plain")
-                                .body(warp::hyper::Body::from(error_body))
-                                .unwrap();
-                            return Ok::<_, warp::Rejection>(res);
-                        }
-
-                        // Stream the response body for SSE support
-                        let stream = response.bytes_stream().map(|result| {
-                            result.map(|bytes| bytes.to_vec())
-                                .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
-                        });
-
-                        let body = warp::hyper::Body::wrap_stream(stream);
-
-                        let res = warp::http::Response::builder()
-                            .status(warp::http::StatusCode::OK)
-                            .header("Content-Type", "text/event-stream")
-                            .body(body)
-                            .unwrap();
-                        Ok(res)
-                    }
-                    Err(e) => {
-                        let res = warp::http::Response::builder()
-                            .status(warp::http::StatusCode::BAD_GATEWAY)
-                            .header("Content-Type", "text/plain")
-                            .body(warp::hyper::Body::from(format!("Proxy error: {}", e)))
-                            .unwrap();
-                        Ok(res)
-                    }
-                }
-            }
-        });
-
-    let proxy_routes = proxy.with(cors());
-
-    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, CODEX_PROXY_PORT));
-    match tokio::net::TcpListener::bind(addr).await {
-        Ok(listener) => {
-            println!("[Stud Codex] Proxy server on http://localhost:{}", CODEX_PROXY_PORT);
-            warp::serve(proxy_routes)
-                .run_incoming(tokio_stream::wrappers::TcpListenerStream::new(listener))
-                .await;
+    fn studio_request(path: &str) -> StudioRequest {
+        StudioRequest {
+            path: path.to_string(),
+            body: None,
         }
-        Err(e) => {
-            println!("[Stud Codex] Port {} already in use ({})", CODEX_PROXY_PORT, e);
+    }
+
+    #[test]
+    fn a_request_is_leased_only_once() {
+        let mut state = BridgeState::new();
+        let (sender, _receiver) = oneshot::channel();
+        let id = state
+            .enqueue(studio_request("/ping"), sender)
+            .expect("request should be queued");
+
+        let first_lease = state
+            .lease_next("session-a")
+            .expect("request should be leased");
+        assert_eq!(first_lease.0, id);
+        assert!(state.lease_next("session-a").is_none());
+        assert!(state.pending_requests.contains_key(&id));
+    }
+
+    #[test]
+    fn pending_queue_is_bounded() {
+        let mut state = BridgeState::new();
+        let mut receivers = Vec::new();
+
+        for _ in 0..MAX_PENDING_REQUESTS {
+            let (sender, receiver) = oneshot::channel();
+            receivers.push(receiver);
+            assert!(state.enqueue(studio_request("/ping"), sender).is_some());
         }
+
+        let (sender, _receiver) = oneshot::channel();
+        assert!(state.enqueue(studio_request("/ping"), sender).is_none());
+        assert_eq!(state.pending_requests.len(), MAX_PENDING_REQUESTS);
+    }
+
+    #[test]
+    fn second_studio_session_is_rejected_while_first_is_live() {
+        let mut state = BridgeState::new();
+
+        assert!(state.admit_session("session-a"));
+        assert!(state.admit_session("session-a"));
+        assert!(!state.admit_session("session-b"));
+        assert!(!state.release_session("session-b"));
+        assert!(state.release_session("session-a"));
+        assert!(state.admit_session("session-b"));
+
+        state
+            .active_session
+            .as_mut()
+            .expect("session should be active")
+            .last_seen = Instant::now() - Duration::from_secs(STUDIO_SESSION_TIMEOUT_SECS + 1);
+
+        assert!(state.admit_session("session-c"));
+    }
+
+    #[test]
+    fn only_the_session_that_leased_a_request_can_complete_it() {
+        let mut state = BridgeState::new();
+        let (sender, _receiver) = oneshot::channel();
+        let id = state
+            .enqueue(studio_request("/ping"), sender)
+            .expect("request should be queued");
+        state
+            .lease_next("session-a")
+            .expect("request should be leased");
+
+        assert!(matches!(
+            state.complete_request(&id, "session-b"),
+            Err(CompleteRequestError::WrongSession)
+        ));
+        assert!(state.pending_requests.contains_key(&id));
+        assert!(state.complete_request(&id, "session-a").is_ok());
+        assert!(!state.pending_requests.contains_key(&id));
+    }
+
+    #[test]
+    fn studio_pairing_rejects_missing_or_wrong_secrets() {
+        let expected = crate::plugin::pairing_secret();
+
+        assert!(!pairing_secret_matches(None));
+        assert!(!pairing_secret_matches(Some("wrong")));
+        assert!(pairing_secret_matches(Some(expected)));
+    }
+
+    #[tokio::test]
+    async fn desktop_status_and_request_reject_missing_or_wrong_auth() {
+        let expected = crate::plugin::pairing_secret().to_string();
+        let state: SharedState = Arc::new(Mutex::new(BridgeState::new()));
+
+        for provided in [None, Some("wrong".to_string())] {
+            let status = status_reply(provided.clone(), state.clone()).into_response();
+            assert_eq!(status.status(), warp::http::StatusCode::UNAUTHORIZED);
+
+            let request =
+                handle_request(provided, studio_request("/instance/create"), state.clone())
+                    .await
+                    .expect("auth rejection should be a response")
+                    .into_response();
+            assert_eq!(request.status(), warp::http::StatusCode::UNAUTHORIZED);
+        }
+
+        let status = status_reply(Some(expected), state).into_response();
+        assert_eq!(status.status(), warp::http::StatusCode::OK);
+    }
+
+    #[test]
+    fn oauth_poll_and_clear_require_auth_while_callback_stays_public() {
+        let _guard = OAUTH_TEST_LOCK.lock();
+        let callback = OAuthCallbackData {
+            code: "code".to_string(),
+            state: "state".to_string(),
+            timestamp: chrono_lite_timestamp(),
+        };
+        *OAUTH_CALLBACK_DATA.lock() = Some(callback);
+
+        assert_eq!(
+            oauth_poll_reply(None).into_response().status(),
+            warp::http::StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            oauth_clear_reply(Some("wrong".to_string()))
+                .into_response()
+                .status(),
+            warp::http::StatusCode::UNAUTHORIZED
+        );
+        assert!(OAUTH_CALLBACK_DATA.lock().is_some());
+
+        let expected = crate::plugin::pairing_secret().to_string();
+        assert_eq!(
+            oauth_poll_reply(Some(expected.clone()))
+                .into_response()
+                .status(),
+            warp::http::StatusCode::OK
+        );
+        assert_eq!(
+            oauth_clear_reply(Some(expected)).into_response().status(),
+            warp::http::StatusCode::OK
+        );
+        assert!(OAUTH_CALLBACK_DATA.lock().is_none());
+
+        let public_callback = oauth_callback_reply(std::collections::HashMap::from([
+            ("code".to_string(), "new-code".to_string()),
+            ("state".to_string(), "new-state".to_string()),
+        ]))
+        .into_response();
+        assert_eq!(public_callback.status(), warp::http::StatusCode::OK);
+        *OAUTH_CALLBACK_DATA.lock() = None;
+    }
+
+    #[test]
+    fn oauth_callback_expires_after_five_minutes() {
+        let callback = OAuthCallbackData {
+            code: "code".to_string(),
+            state: "state".to_string(),
+            timestamp: 1_000,
+        };
+
+        assert!(oauth_callback_is_fresh(
+            &callback,
+            callback.timestamp + OAUTH_CALLBACK_TTL_MS - 1
+        ));
+        assert!(!oauth_callback_is_fresh(
+            &callback,
+            callback.timestamp + OAUTH_CALLBACK_TTL_MS
+        ));
+    }
+
+    #[test]
+    fn oauth_callback_requires_bounded_code_and_state_values() {
+        assert!(valid_oauth_callback("code", "state"));
+        assert!(!valid_oauth_callback("", "state"));
+        assert!(!valid_oauth_callback("code", ""));
+        assert!(!valid_oauth_callback(
+            &"c".repeat(MAX_OAUTH_CODE_BYTES + 1),
+            "state"
+        ));
+        assert!(!valid_oauth_callback(
+            "code",
+            &"s".repeat(MAX_OAUTH_STATE_BYTES + 1)
+        ));
+    }
+
+    #[test]
+    fn oauth_failure_page_does_not_render_provider_error_html() {
+        let attacker_controlled_error = "<script>alert('xss')</script>";
+        let html = oauth_failure_html(attacker_controlled_error);
+
+        assert!(!html.contains(attacker_controlled_error));
+        assert!(html.contains("Sign-in could not be completed."));
+    }
+
+    #[tokio::test]
+    async fn current_and_legacy_bridge_namespaces_are_available() {
+        let route = bridge_namespace()
+            .and(warp::path("status"))
+            .and(warp::path::end())
+            .map(warp::reply);
+
+        for path in ["/bubberton9001/status", "/stud/status"] {
+            let response = warp::test::request().path(path).reply(&route).await;
+            assert_eq!(response.status(), warp::http::StatusCode::OK);
+        }
+    }
+
+    #[tokio::test]
+    async fn cors_allows_local_app_and_rejects_remote_origins() {
+        let route = warp::path::end()
+            .and(warp::get())
+            .map(warp::reply)
+            .with(cors());
+
+        let local = warp::test::request()
+            .method("OPTIONS")
+            .header("origin", "http://localhost:1430")
+            .header("access-control-request-method", "GET")
+            .reply(&route)
+            .await;
+        assert_eq!(local.status(), warp::http::StatusCode::OK);
+        assert_eq!(
+            local.headers()["access-control-allow-origin"],
+            "http://localhost:1430"
+        );
+
+        let remote = warp::test::request()
+            .method("OPTIONS")
+            .header("origin", "https://example.com")
+            .header("access-control-request-method", "GET")
+            .reply(&route)
+            .await;
+        assert_eq!(remote.status(), warp::http::StatusCode::FORBIDDEN);
     }
 }

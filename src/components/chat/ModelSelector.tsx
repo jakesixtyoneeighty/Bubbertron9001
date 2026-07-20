@@ -16,10 +16,11 @@ import { Check, ChevronDown, Search, Zap, Brain, Sparkles } from "lucide-react";
 
 // Static models for API key providers (OpenAI/Anthropic direct API access)
 const staticModels: { id: string; name: string; short: string; provider: ProviderType; description?: string }[] = [
-  { id: "gpt-4o", name: "GPT-4o", short: "4o", provider: "openai", description: "Most capable" },
-  { id: "gpt-4o-mini", name: "GPT-4o Mini", short: "4o mini", provider: "openai", description: "Fast & cheap" },
-  { id: "claude-sonnet-4-20250514", name: "Claude Sonnet 4", short: "Sonnet 4", provider: "anthropic", description: "Best for code" },
-  { id: "claude-3-5-haiku-20241022", name: "Claude Haiku", short: "Haiku", provider: "anthropic", description: "Fast" },
+  { id: "gpt-5.6-sol", name: "GPT-5.6 Sol", short: "5.6 Sol", provider: "openai", description: "Most capable" },
+  { id: "gpt-5.6-terra", name: "GPT-5.6 Terra", short: "5.6 Terra", provider: "openai", description: "Balanced" },
+  { id: "gpt-5.6-luna", name: "GPT-5.6 Luna", short: "5.6 Luna", provider: "openai", description: "Fast & efficient" },
+  { id: "claude-sonnet-5", name: "Claude Sonnet 5", short: "Sonnet 5", provider: "anthropic", description: "Fast, capable coding" },
+  { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", short: "Haiku 4.5", provider: "anthropic", description: "Fastest" },
 ];
 
 interface ModelSelectorProps {

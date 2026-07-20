@@ -4,6 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { BRAND } from "@/config/brand";
 import { LogoMark } from "@/components/icons/Logo";
 import { Sparkles, Code, Wand2, Search, Bot, ArrowDown } from "lucide-react";
 
@@ -97,7 +98,8 @@ export function EmptyState({ className }: EmptyStateProps) {
       {/* Title */}
       <h1 className="text-3xl font-heading mb-2">What would you like to build?</h1>
       <p className="text-muted-foreground mb-8 max-w-md">
-        <span className="font-logo">Stud</span> can help you create, modify, and debug your Roblox game with AI-powered assistance.
+        <span className="font-logo">{BRAND.name}</span> can help you create,
+        modify, and debug your Roblox game with skills-powered AI assistance.
       </p>
 
       {/* Capabilities */}

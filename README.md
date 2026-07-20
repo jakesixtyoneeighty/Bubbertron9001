@@ -1,27 +1,43 @@
-# Stud
+# Bubberton9001
 
-**The AI Agent for Roblox Studio** - Build games with AI that actually *does* things.
+**The skills-powered AI agent for Roblox Studio.** Bubberton9001—**B9** for
+short—plans the work, researches current answers, changes the game, verifies the
+result, and corrects errors.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Made with Tauri](https://img.shields.io/badge/Made%20with-Tauri-blue)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61DAFB)](https://react.dev)
 
-Stud connects AI models (GPT-4, Claude, ChatGPT Plus/Pro) directly to Roblox Studio, enabling real-time manipulation of instances, scripts, and properties through natural language. Think **Cursor AI, but for Roblox development**.
+Bubberton9001 connects OpenAI, Anthropic, and ChatGPT subscription models
+directly to Roblox Studio. It can manipulate instances, scripts, and properties
+through natural language while grounding Roblox decisions in a bundled skill
+library.
 
-## Why Stud?
+## Why Bubberton9001?
 
-Most AI coding tools are built for text files. Roblox Studio is different - it's a visual tree of instances, properties, and Luau scripts. Stud bridges this gap by giving AI direct access to your Studio session.
+Most AI coding tools are built for text files. Roblox Studio is a live hierarchy
+of instances, properties, assets, and Luau scripts. B9 bridges that gap with a
+desktop agent and Studio plugin.
 
-**Before Stud**: Copy code from ChatGPT → Paste into Studio → Debug → Repeat
+**Before B9**: Copy code from chat → Paste into Studio → Debug → Repeat
 
-**With Stud**: "Create a car that players can drive" → AI creates the model, scripts, and configures everything → Done
+**With B9**: “Create a car that players can drive” → plan → build → inspect →
+verify → repair if needed
 
 ## Features
 
 - **Direct Studio Control** - AI creates, modifies, and deletes instances in real-time
-- **Script Editing** - Read, write, and edit Luau scripts with intelligent diff
-- **15+ AI Tools** - Complete toolkit for any Roblox development task
+- **Script Editing** - Read, write, and make exact verified Luau replacements
+- **30 Roblox Skills** - Lazy quick/full guidance from
+  [`roblox-brain`](https://github.com/jakesixtyoneeighty/roblox-brain)
+- **Automatic Planning** - Complex changes begin with a visible, tracked plan
+- **Web Search** - Current Roblox documentation and uncertain facts can be researched
+- **Proof-Backed Verification** - A mutation must be followed by a successful Studio read-back before a plan can finish
+- **Broad Toolset** - Studio, bulk, toolbox, skill, research, and workflow tools
 - **Multi-Provider** - OpenAI API, Anthropic API, or ChatGPT Plus/Pro (no API key needed!)
+- **Safe Creator Store** - Free models are revalidated and imported scripts are quarantined for review
+- **Hardened Local Bridge** - Paired Studio plugin, one active session, bounded requests, and authenticated local routes
+- **Native Secret Storage** - Packaged builds use the operating system credential store
 - **Live Feedback** - See exactly what the AI is doing in your game
 - **Undo Support** - Every AI change creates an undo waypoint
 - **Modern UI** - Built with React 19 and [prompt-kit](https://prompt-kit.com)
@@ -31,19 +47,19 @@ Most AI coding tools are built for text files. Roblox Studio is different - it's
 > *"Set up a basic obby with 5 platforms that get progressively harder"*
 
 The AI will:
-1. Create a folder structure for the obby
-2. Generate 5 platforms with increasing gaps
-3. Add spawn and finish checkpoints
-4. Create a respawn script for falling players
-5. Test the configuration
+1. Inspect the current game and create a short plan
+2. Load the relevant building, physics, and review skills
+3. Create the obby structure and five increasingly difficult platforms
+4. Add spawn, finish, and respawn behavior
+5. Read the result back, verify it, and correct any failed check
 
-All while you watch it happen in real-time.
+The plan and tool progress stay visible while B9 works.
 
 ## How It Works
 
 ```
 ┌─────────────┐     HTTP      ┌─────────────┐     Polling     ┌─────────────┐
-│   Stud UI   │◄────────────►│   Bridge    │◄───────────────►│   Studio    │
+│    B9 UI    │◄────────────►│   Bridge    │◄───────────────►│   Studio    │
 │   (React)   │   :3001      │   (Rust)    │   100ms         │  (Plugin)   │
 └─────────────┘              └─────────────┘                 └─────────────┘
       │
@@ -55,11 +71,12 @@ All while you watch it happen in real-time.
 └─────────────┘
 ```
 
-1. You type a message in Stud
-2. AI decides which tools to use
-3. Bridge Server (Rust) queues the requests
-4. Studio Plugin executes commands in your game
-5. Results flow back to AI, which continues or responds
+1. You describe a goal in Bubberton9001
+2. B9 searches or loads only the skills it needs
+3. Complex work gets a structured plan
+4. The Rust bridge queues requests for the Studio plugin
+5. Studio executes the operations and returns evidence
+6. B9 verifies the outcome and repairs failures before summarizing
 
 *The polling pattern is necessary because Roblox Studio can only make outgoing HTTP requests.*
 
@@ -67,7 +84,7 @@ All while you watch it happen in real-time.
 
 ### Prerequisites
 
-- [Node.js](https://nodejs.org/) v18+
+- [Node.js](https://nodejs.org/) v20.19+ or v22.12+ (`.nvmrc` pins Node 22)
 - [Rust](https://rustup.rs/) (for Tauri)
 - [Roblox Studio](https://create.roblox.com/)
 
@@ -75,7 +92,7 @@ All while you watch it happen in real-time.
 
 ```bash
 # Clone the repo
-git clone https://github.com/madebyshaurya/stud.git
+git clone https://github.com/jakesixtyoneeighty/stud.git
 cd stud
 
 # Install dependencies
@@ -87,11 +104,16 @@ npm run tauri dev
 
 ### Install the Studio Plugin
 
-1. Open Roblox Studio
-2. Go to **Plugins** → **Plugins Folder** (or press `Alt+P`)
-3. Copy `studio-plugin/stud-bridge.server.lua` to this folder
-4. Restart Roblox Studio
-5. You'll see "Stud Bridge" in your plugin toolbar
+1. Start Bubberton9001 Desktop with `npm run tauri dev`.
+2. On the connection screen, choose **Install Automatically**.
+3. For a manual install, choose **Download Paired Plugin**, then move the
+   downloaded file into Roblox Studio’s **Plugins Folder**.
+4. Restart Roblox Studio. You’ll see **Bubberton9001** in the plugin toolbar.
+
+The checked-in file at
+`studio-plugin/bubberton9001-bridge.server.lua` is an intentionally unpaired
+source template. Do not install or redistribute that raw file: only the desktop
+app can render a copy whose pairing secret matches its local bridge.
 
 ## Configuration
 
@@ -103,14 +125,21 @@ npm run tauri dev
 | **OpenAI API** | Add API key in Settings | Pay-per-use, full control |
 | **Anthropic API** | Add API key in Settings | Claude models |
 
-**Recommended**: If you have ChatGPT Plus/Pro, use the OAuth sign-in. No API key needed, and it works with GPT-4, GPT-5, o3, and more.
+**Recommended**: If you have ChatGPT Plus/Pro, use the OAuth sign-in. B9
+defaults to the balanced GPT-5.6 Terra model and shows the current Sol, Terra,
+and Luna choices available to the account. Direct API users can choose current
+OpenAI or Anthropic models.
 
-### Roblox Cloud API (Optional)
+### Credential storage
 
-For DataStore access and game publishing:
-1. Go to [Creator Hub > API Keys](https://create.roblox.com/dashboard/credentials)
-2. Create a key with required permissions
-3. Add to Settings in Stud
+Packaged desktop builds keep API keys and ChatGPT access/refresh tokens in the
+operating system credential store (macOS Keychain, Windows Credential Manager,
+or Linux Secret Service). Existing plaintext credentials are migrated and
+removed from the app's local preferences on first launch.
+
+The browser-only development preview has no native credential store, so it uses
+a localStorage fallback. Do not enter production credentials into a shared
+browser profile.
 
 ## AI Tools
 
@@ -133,7 +162,7 @@ For DataStore access and game publishing:
 | `roblox_get_script` | Read script source code |
 | `roblox_set_script` | Replace entire script content |
 | `roblox_edit_script` | Find/replace within scripts |
-| `roblox_run_code` | Execute Luau code immediately |
+| `roblox_run_code` | Execute bounded Luau after a fresh per-call confirmation |
 
 ### Bulk Operations
 | Tool | What it does |
@@ -141,6 +170,31 @@ For DataStore access and game publishing:
 | `roblox_bulk_create` | Create many instances at once |
 | `roblox_bulk_delete` | Delete multiple instances |
 | `roblox_bulk_set_property` | Update properties across many instances |
+
+### Skills, Research, and Workflow
+
+| Tool | What it does |
+|------|-------------|
+| `skill_search` | Search the compact allowlisted Roblox skill catalog |
+| `skill_load` | Lazily load quick guidance or full references |
+| `web_search` | Research current web or official Roblox documentation |
+| `agent_create_plan` | Create a concrete plan before complex changes |
+| `agent_update_plan` | Track progress and failures during execution |
+| `agent_finish_plan` | Verify the result or enter the repair loop |
+
+## Safety boundaries
+
+- B9 asks before the first normal Studio mutation in a run. Arbitrary Luau
+  always receives its own confirmation.
+- Creator Store IDs are checked as free, purchasable Models immediately before
+  insertion. Imported `Script` and `LocalScript` instances are disabled before
+  the asset is parented into the game, and all script containers are returned
+  for review.
+- The desktop, Studio plugin, and OAuth polling routes share a per-install
+  pairing secret. Only one Studio session can own the bridge at a time.
+- **Stop** prevents later tool calls and cancels waiting frontend requests. It
+  cannot forcibly terminate Luau that has already begun inside Studio, so review
+  every `roblox_run_code` confirmation carefully.
 
 ## Example Prompts
 
@@ -168,8 +222,13 @@ npm run tauri dev
 # Frontend only (faster iteration)
 npm run dev
 
-# Type checking
-npx tsc --noEmit
+# Type checking and frontend tests
+npm run typecheck
+npm run test:run
+
+# Validate vendored skills and the two plugin copies
+npm run validate:skills
+npm run check:studio-plugin
 
 # Production build
 npm run tauri build
@@ -182,15 +241,18 @@ stud/
 ├── src/                      # React frontend
 │   ├── components/           # UI components (shadcn/ui + prompt-kit)
 │   ├── lib/
-│   │   ├── ai/              # AI providers and chat logic
-│   │   └── roblox/          # Roblox tools (Zod schemas)
+│   │   ├── agent/           # Planning, verification, and repair
+│   │   ├── ai/              # Providers, prompts, and chat runtime
+│   │   ├── roblox/          # Roblox tools (Zod schemas)
+│   │   └── skills/          # Lazy skill catalog and loading tools
 │   └── stores/              # Zustand state management
+├── skills/                   # 30 vendored Roblox Brain skills
 ├── src-tauri/               # Rust backend
 │   └── src/
 │       ├── bridge.rs        # HTTP bridge server (Warp)
 │       └── lib.rs           # Tauri app setup
 └── studio-plugin/           # Roblox Studio plugin
-    └── stud-bridge.server.lua
+    └── bubberton9001-bridge.server.lua # Unpaired source template
 ```
 
 ## Tech Stack
@@ -207,12 +269,17 @@ stud/
 
 ## Roadmap
 
-- [ ] **Toolbox Search** - Visual asset picker from Creator Store
-- [ ] **Auto-Planning** - AI plans before executing complex tasks
-- [ ] **@ Mentions** - Reference instances with `@game.Workspace.Part`
-- [ ] **Diff View** - See script changes before/after
+- [x] **Toolbox Search** - Search and insert Creator Store assets
+- [x] **Auto-Planning** - Plan and track complex tasks before execution
+- [x] **Roblox Skills** - Progressive-disclosure guidance across 30 domains
+- [x] **Web Search** - Provider-native current-information research
+- [x] **Error Repair** - Bounded verification and correction workflow
+- [x] **Secure Persistence** - Native credential storage with plaintext migration
+- [x] **CI Gates** - Frontend, Rust, skills, audit, and plugin-integrity checks
+- [x] **@ Mentions** - Reference instances with `@game.Workspace.Part`
+- [ ] **Change Preview** - Approve a script diff before it is applied
 - [ ] **One-Click Games** - Templates for Obby, Tycoon, FPS, etc.
-- [ ] **Roblox Docs RAG** - AI that knows the Roblox API deeply
+- [ ] **Cloud Operations** - Authenticated DataStore and publishing workflows
 - [ ] **Sub-Agents** - Parallel AI workers for complex tasks
 
 ## Contributing
@@ -229,13 +296,13 @@ See [CLAUDE.md](./CLAUDE.md) for code style guidelines and architecture details.
 
 ## Community
 
-- Report bugs via [GitHub Issues](https://github.com/madebyshaurya/stud/issues)
+- Report bugs via [GitHub Issues](https://github.com/jakesixtyoneeighty/stud/issues)
 - Feature requests welcome!
 - Star the repo if you find it useful
 
 ## License
 
-MIT License - see [LICENSE](./LICENSE) for details.
+GNU AGPL-3.0 with the additional notice terms in [LICENSE](./LICENSE).
 
 ---
 

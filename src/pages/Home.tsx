@@ -24,6 +24,8 @@ import { SettingsPanel } from "@/components/SettingsPanel";
 import { ContextChips, ChipAction } from "@/components/chat/ContextChips";
 import { QuestionPrompt } from "@/components/chat/QuestionPrompt";
 import { InstancePicker } from "@/components/chat/InstancePicker";
+import { PlanView } from "@/components/chat/PlanView";
+import { SourceList } from "@/components/chat/SourceList";
 import { ChatActions } from "@/components/QuickActions";
 import { CommandPalette } from "@/components/CommandPalette";
 import { EmptyState } from "@/components/EmptyState";
@@ -33,9 +35,16 @@ import { useRobloxStore, ConnectionStatus } from "@/stores/roblox";
 import { usePluginStore } from "@/stores/plugin";
 import { useAuthStore } from "@/stores/auth";
 import { useChat } from "@/lib/ai/providers";
-import { setAskUserHandler } from "@/lib/roblox/tools";
+import {
+  cancelPendingQuestions,
+  setAskUserHandler,
+} from "@/lib/roblox/questions";
+import { useAgentStore } from "@/stores/agent";
+import { isAbortError } from "@/lib/ai/errors";
+import { BRAND } from "@/config/brand";
 import { useAppShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { improvePrompt } from "@/lib/ai/prompt-improver";
+import { downloadPairedStudioPlugin } from "@/lib/plugin-download";
 import { cn } from "@/lib/utils";
 import { ArrowUp, Square, CheckCircle2, Download, FolderOpen, RefreshCw, Box, FileText, Globe, Play, ListTodo, Settings, Sparkles } from "lucide-react";
 
@@ -119,7 +128,13 @@ function ConnectionStep({
 }
 
 // Connection screen shown when bridge is not connected
-function ConnectionScreen({ status }: { status: ConnectionStatus }) {
+function ConnectionScreen({
+  status,
+  onContinueOffline,
+}: {
+  status: ConnectionStatus;
+  onContinueOffline: () => void;
+}) {
   const { 
     status: pluginStatus, 
     isChecking, 
@@ -146,27 +161,17 @@ function ConnectionScreen({ status }: { status: ConnectionStatus }) {
   };
 
   const handleDownloadPlugin = async () => {
-    // Fetch the plugin content and trigger download
     try {
-      const response = await fetch("/studio-plugin/stud-bridge.server.lua");
-      if (!response.ok) {
-        // If not available via fetch, we'll use the embedded version from Tauri
-        // For now, show manual path
-        setShowManualPath(true);
-        return;
-      }
-      const content = await response.text();
-      const blob = new Blob([content], { type: "text/plain" });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = "stud-bridge.server.lua";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    } catch {
+      const filename = await downloadPairedStudioPlugin();
       setShowManualPath(true);
+      setInstallMessage(
+        `${filename} downloaded with this app's secure pairing. Move it to the Plugins folder below, then restart Roblox Studio.`
+      );
+    } catch (error) {
+      setShowManualPath(false);
+      setInstallMessage(
+        `Error: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   };
 
@@ -203,16 +208,16 @@ function ConnectionScreen({ status }: { status: ConnectionStatus }) {
             <h1 className="text-2xl font-heading text-foreground">
               Connecting to Roblox Studio
             </h1>
-            <p className="text-muted-foreground">
+            <div className="text-muted-foreground">
               <Loader variant="terminal" text="Waiting for connection" size="sm" />
-            </p>
+            </div>
           </div>
 
           {/* Connection steps */}
           <div className="bg-card rounded-2xl border border-border p-6 space-y-6">
             <ConnectionStep
               step={1}
-              title="Start Stud Desktop"
+              title={`Start ${BRAND.name} Desktop`}
               description="The bridge server starts automatically with this app"
               status={getStepStatus(1)}
             />
@@ -230,8 +235,8 @@ function ConnectionScreen({ status }: { status: ConnectionStatus }) {
             
             <ConnectionStep
               step={3}
-              title="Connect stud-bridge Plugin"
-              description="Click 'Connect' in the stud-bridge plugin toolbar"
+              title={`Connect ${BRAND.name} Bridge`}
+              description={`Click Connect in the ${BRAND.name} plugin toolbar`}
               status={getStepStatus(3)}
             />
           </div>
@@ -314,9 +319,10 @@ function ConnectionScreen({ status }: { status: ConnectionStatus }) {
               <Button
                 variant="outline"
                 onClick={handleDownloadPlugin}
-                title="Download plugin file for manual installation"
+                title="Download securely paired plugin for manual installation"
               >
-                <FolderOpen className="w-4 h-4" />
+                <FolderOpen className="w-4 h-4 mr-2" />
+                Download Paired
               </Button>
             </div>
 
@@ -324,13 +330,21 @@ function ConnectionScreen({ status }: { status: ConnectionStatus }) {
             {showManualPath && pluginStatus && (
               <div className="text-xs text-muted-foreground bg-muted/50 rounded-lg p-3 space-y-1">
                 <p className="font-medium text-foreground">Manual Installation:</p>
-                <p>Copy the plugin to your Roblox Plugins folder:</p>
+                <p>Move the downloaded paired plugin to your Roblox Plugins folder:</p>
                 <code className="block bg-background px-2 py-1 rounded text-xs break-all">
                   {pluginStatus.plugins_folder}
                 </code>
               </div>
             )}
           </div>
+
+          <Button
+            variant="ghost"
+            className="w-full text-muted-foreground"
+            onClick={onContinueOffline}
+          >
+            Continue in research mode
+          </Button>
         </div>
       </main>
     </div>
@@ -368,6 +382,7 @@ export function Home() {
   const [input, setInput] = useState("");
   const [activeChips, setActiveChips] = useState<ChipAction[]>([]);
   const [isImproving, setIsImproving] = useState(false);
+  const [workOffline, setWorkOffline] = useState(false);
   const [displayedSuggestions, setDisplayedSuggestions] = useState<string[]>([]);
   const {
     messages,
@@ -378,6 +393,7 @@ export function Home() {
     updateMessage,
     addToolCall,
     updateToolCall,
+    addSource,
     setStreaming,
     setError,
     setPendingQuestion,
@@ -386,9 +402,13 @@ export function Home() {
     clearMessages,
   } = useChatStore();
   const { hasApiKey } = useSettingsStore();
+  const hasOAuthSession = useAuthStore((state) =>
+    state.isOAuthAuthenticated()
+  );
   const { status: studioStatus, startPolling } = useRobloxStore();
   const { sendMessage } = useChat();
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Keyboard shortcuts
   useAppShortcuts({
@@ -407,6 +427,13 @@ export function Home() {
     const cleanup = startPolling();
     return cleanup;
   }, [startPolling]);
+
+  // Once the workspace has opened, keep research mode available if Studio drops.
+  useEffect(() => {
+    if (studioStatus === "connected") {
+      setWorkOffline(true);
+    }
+  }, [studioStatus]);
 
   // Shuffle and pick random suggestions on mount and when messages clear
   useEffect(() => {
@@ -430,10 +457,12 @@ export function Home() {
 
     return () => {
       setAskUserHandler(null);
+      cancelPendingQuestions("Bubberton9001 closed the question");
     };
   }, [setPendingQuestion, setQuestionResolver]);
 
-  const hasConfiguredProvider = hasApiKey("openai") || hasApiKey("anthropic") || useAuthStore.getState().isOAuthAuthenticated();
+  const hasConfiguredProvider =
+    hasApiKey("openai") || hasApiKey("anthropic") || hasOAuthSession;
   const isConnected = studioStatus === "connected";
 
   // Improve prompt handler
@@ -460,19 +489,20 @@ export function Home() {
     if (!input.trim() || isStreaming) return;
 
     const userMessage = input.trim();
+    const requestChips = [...activeChips];
 
     // Build context prefix based on active chips
     const prefixes: string[] = [];
-    if (activeChips.includes("docs")) {
+    if (requestChips.includes("docs")) {
       prefixes.push("[Search Roblox documentation first]");
     }
-    if (activeChips.includes("web")) {
+    if (requestChips.includes("web")) {
       prefixes.push("[Search the web for information]");
     }
-    if (activeChips.includes("search-models")) {
+    if (requestChips.includes("search-models")) {
       prefixes.push("[Search the Creator Store for free models if needed]");
     }
-    if (activeChips.includes("plan")) {
+    if (requestChips.includes("plan")) {
       prefixes.push("[Create a detailed plan before making changes]");
     }
     const chipContext = prefixes.join(" ");
@@ -484,13 +514,19 @@ export function Home() {
     console.log("[Home] Submitting message:", userMessage, "with context:", chipContext);
 
     // Add user message (show without context prefix for cleaner UI, but store chips)
-    addMessage({ role: "user", content: userMessage, contextChips: activeChips.length > 0 ? [...activeChips] : undefined });
+    addMessage({
+      role: "user",
+      content: userMessage,
+      contextChips: requestChips.length > 0 ? requestChips : undefined,
+    });
 
     // Add placeholder for assistant
     const assistantId = addMessage({ role: "assistant", content: "" });
 
     setStreaming(true);
     setError(null);
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
 
     try {
       const chatMessages = [
@@ -526,23 +562,69 @@ export function Home() {
             result: toolResult.output,
           });
         },
+        onToolError: (toolError) => {
+          console.error(
+            "[Home] Tool error received:",
+            toolError.name,
+            toolError.error
+          );
+          updateToolCall(assistantId, toolError.id, {
+            status: "error",
+            error: toolError.error,
+          });
+          useAgentStore.getState().setPhase("repairing");
+        },
+        onSource: (source) => {
+          addSource(assistantId, source);
+        },
         onFinish: () => {
           console.log("[Home] Stream finished, total length:", fullText.length);
-          setStreaming(false);
+          const agent = useAgentStore.getState();
+          if (!agent.plan && agent.phase !== "completed") {
+            agent.completeRun("Response completed");
+          }
         },
         onError: (error) => {
-          console.error("[Home] Stream error:", error);
-          setError(error.message);
-          setStreaming(false);
+          if (!isAbortError(error)) {
+            console.error("[Home] Stream error:", error);
+            setError(error.message);
+            useAgentStore.getState().failRun(error.message);
+          }
         },
+        signal: controller.signal,
+        forcePlan: requestChips.includes("plan"),
+        forceWebSearch:
+          requestChips.includes("web") || requestChips.includes("docs"),
+        officialDocsOnly:
+          requestChips.includes("docs") && !requestChips.includes("web"),
       });
     } catch (error) {
-      console.error("[Home] Chat error:", error);
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      setError(errorMessage);
+      if (!isAbortError(error)) {
+        console.error("[Home] Chat error:", error);
+        const message = error instanceof Error ? error.message : String(error);
+        setError(message);
+        useAgentStore.getState().failRun(message);
+      }
+    } finally {
+      if (abortControllerRef.current === controller) {
+        abortControllerRef.current = null;
+      }
       setStreaming(false);
     }
-  }, [input, isStreaming, messages, activeChips, addMessage, updateMessage, addToolCall, updateToolCall, setStreaming, setError, sendMessage]);
+  }, [
+    input,
+    isStreaming,
+    messages,
+    activeChips,
+    addMessage,
+    updateMessage,
+    addToolCall,
+    updateToolCall,
+    addSource,
+    setStreaming,
+    setError,
+    sendMessage,
+  ]);
 
   const handleSuggestionClick = (suggestion: string) => {
     setInput(suggestion);
@@ -563,12 +645,23 @@ export function Home() {
   };
 
   const handleStop = () => {
+    abortControllerRef.current?.abort();
+    abortControllerRef.current = null;
+    cancelPendingQuestions("Agent run stopped by the user");
+    setPendingQuestion(null);
+    setQuestionResolver(null);
+    useAgentStore.getState().cancelRun();
     setStreaming(false);
   };
 
   // Show connection screen if not connected
-  if (!isConnected) {
-    return <ConnectionScreen status={studioStatus} />;
+  if (!isConnected && !workOffline) {
+    return (
+      <ConnectionScreen
+        status={studioStatus}
+        onContinueOffline={() => setWorkOffline(true)}
+      />
+    );
   }
 
   // Empty state - show centered input (connected but no messages)
@@ -583,6 +676,13 @@ export function Home() {
             <SettingsDialog />
           </div>
         </header>
+
+        {!isConnected && (
+          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-800">
+            Research mode — web, documentation, planning, and skills are
+            available; Studio editing is paused.
+          </div>
+        )}
 
         {/* Centered content */}
         <main className="flex-1 flex flex-col items-center justify-center px-6 pb-24">
@@ -648,7 +748,9 @@ export function Home() {
                   <div className="flex items-center gap-2">
                     <ModelSelector disabled={!hasConfiguredProvider} />
                     {/* Improve Prompt Button */}
-                    <PromptInputAction tooltip="Improve prompt for Stud">
+                    <PromptInputAction
+                      tooltip={`Improve prompt for ${BRAND.name}`}
+                    >
                       <Button
                         variant="ghost"
                         size="icon"
@@ -725,7 +827,7 @@ export function Home() {
       <header className="flex items-center justify-between px-6 py-3 border-b border-border/50 bg-card/50 backdrop-blur-sm">
         <div className="flex items-center gap-3">
           <LogoMark className="w-8 h-8" />
-          <span className="text-lg font-logo">Stud</span>
+          <span className="text-lg font-logo">{BRAND.name}</span>
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={studioStatus} />
@@ -743,6 +845,13 @@ export function Home() {
           />
         </div>
       </header>
+
+      {!isConnected && (
+        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-800">
+          Research mode — Studio editing tools will resume after the bridge
+          reconnects.
+        </div>
+      )}
 
       {/* Chat messages */}
       <ChatContainerRoot className="flex-1 relative">
@@ -772,6 +881,8 @@ export function Home() {
               </button>
             </div>
           )}
+
+          <PlanView />
 
           {/* Empty state when no messages */}
           {messages.length === 0 && !isStreaming && (
@@ -828,6 +939,10 @@ export function Home() {
                     </div>
                   )
                 )}
+
+                {message.role === "assistant" && message.sources && (
+                  <SourceList sources={message.sources} />
+                )}
               </div>
             </Message>
           ))}
@@ -847,7 +962,9 @@ export function Home() {
           {isStreaming && !pendingQuestion && (
             <div className="flex items-center gap-3 px-4 py-3 bg-muted/30 rounded-xl max-w-fit mx-auto">
               <Loader variant="wave" size="sm" />
-              <span className="text-sm text-muted-foreground">AI is working...</span>
+              <span className="text-sm text-muted-foreground">
+                {BRAND.name} is working...
+              </span>
             </div>
           )}
         </ChatContainerContent>
@@ -904,7 +1021,9 @@ export function Home() {
               <div className="flex items-center gap-2">
                 <ModelSelector />
                 {/* Improve Prompt Button */}
-                <PromptInputAction tooltip="Improve prompt for Stud (AI enhances your message)">
+                <PromptInputAction
+                  tooltip={`Improve prompt for ${BRAND.name} (AI enhances your message)`}
+                >
                   <Button
                     variant="ghost"
                     size="icon"

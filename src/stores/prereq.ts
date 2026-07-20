@@ -42,9 +42,9 @@ const initialChecks: PrereqCheck[] = [
     status: "pending",
   },
   {
-    id: "stud-plugin",
-    name: "Stud Plugin",
-    description: "The stud-bridge plugin must be installed in Studio",
+    id: "bubberton9001-plugin",
+    name: "Bubberton9001 Plugin",
+    description: "The Bubberton9001 bridge plugin must be installed in Studio",
     status: "pending",
   },
   {
@@ -56,7 +56,7 @@ const initialChecks: PrereqCheck[] = [
   {
     id: "bridge-server",
     name: "Bridge Server",
-    description: "The bridge server connects Stud to Roblox Studio",
+    description: "The bridge server connects Bubberton9001 to Roblox Studio",
     status: "pending",
   },
   {
@@ -107,29 +107,29 @@ export const usePrereqStore = create<PrereqStore>((set, get) => ({
     }
     set({ checks: [...checks] });
 
-    // 2. Check Stud plugin installation
-    updateCheck("stud-plugin", { status: "checking" });
+    // 2. Check Bubberton9001 plugin installation
+    updateCheck("bubberton9001-plugin", { status: "checking" });
     set({ checks: [...checks] });
 
     try {
       const pluginStatus = await invoke<{ installed: boolean; is_current_version: boolean }>("check_plugin_installed");
       if (pluginStatus.installed && pluginStatus.is_current_version) {
-        updateCheck("stud-plugin", { status: "passed", message: "Plugin is installed and up to date" });
+        updateCheck("bubberton9001-plugin", { status: "passed", message: "Plugin is installed and up to date" });
       } else if (pluginStatus.installed) {
-        updateCheck("stud-plugin", {
+        updateCheck("bubberton9001-plugin", {
           status: "warning",
           message: "Plugin update available",
           action: { label: "Update Plugin", handler: "install-plugin" },
         });
       } else {
-        updateCheck("stud-plugin", {
+        updateCheck("bubberton9001-plugin", {
           status: "failed",
           message: "Plugin not installed",
           action: { label: "Install Plugin", handler: "install-plugin" },
         });
       }
     } catch {
-      updateCheck("stud-plugin", {
+      updateCheck("bubberton9001-plugin", {
         status: "warning",
         message: "Could not check plugin status",
         action: { label: "Install Plugin", handler: "install-plugin" },

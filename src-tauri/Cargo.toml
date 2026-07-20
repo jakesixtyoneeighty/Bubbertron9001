@@ -1,8 +1,8 @@
 [package]
-name = "stud"
+name = "bubberton9001"
 version = "0.1.0"
 description = "AI Agent for Roblox Development"
-authors = ["you"]
+authors = ["jakesixtyoneeighty"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -11,7 +11,7 @@ edition = "2021"
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "stud_lib"
+name = "bubberton9001_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -29,8 +29,5 @@ uuid = { version = "1", features = ["v4"] }
 parking_lot = "0.12"
 dirs = "5"
 lazy_static = "1.4"
-reqwest = { version = "0.12", features = ["json", "stream"] }
-bytes = "1"
-futures-util = "0.3"
 tauri-plugin-http = "2.5.6"
-
+keyring = "4.1.5"

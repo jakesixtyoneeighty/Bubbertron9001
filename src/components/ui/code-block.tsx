@@ -1,6 +1,14 @@
 import { cn } from "@/lib/utils"
 import React, { useEffect, useState } from "react"
-import { codeToHtml } from "shiki"
+
+let highlighterModule:
+  | Promise<typeof import("@/lib/highlighter")>
+  | undefined
+
+function loadHighlighter() {
+  highlighterModule ??= import("@/lib/highlighter")
+  return highlighterModule
+}
 
 export type CodeBlockProps = {
   children?: React.ReactNode
@@ -39,16 +47,32 @@ function CodeBlockCode({
   const [highlightedHtml, setHighlightedHtml] = useState<string | null>(null)
 
   useEffect(() => {
+    let cancelled = false
+    setHighlightedHtml(null)
+
     async function highlight() {
       if (!code) {
-        setHighlightedHtml("<pre><code></code></pre>")
+        if (!cancelled) {
+          setHighlightedHtml("<pre><code></code></pre>")
+        }
         return
       }
 
-      const html = await codeToHtml(code, { lang: language, theme })
-      setHighlightedHtml(html)
+      try {
+        const { highlightCode } = await loadHighlighter()
+        const html = await highlightCode(code, language)
+        if (!cancelled && html) {
+          setHighlightedHtml(html)
+        }
+      } catch (error) {
+        console.warn("[CodeBlock] Syntax highlighting failed; using plain code.", error)
+      }
     }
-    highlight()
+
+    void highlight()
+    return () => {
+      cancelled = true
+    }
   }, [code, language, theme])
 
   const classNames = cn(

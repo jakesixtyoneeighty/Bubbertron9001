@@ -1,11 +1,12 @@
 /**
  * SettingsPanel - Slide-out settings panel
  *
- * Provides access to API keys, UI preferences, and app settings.
+ * Provides access to API keys and active agent behavior settings.
  */
 
 import { useState } from "react";
 import { useSettingsStore } from "@/stores/settings";
+import { BRAND } from "@/config/brand";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -19,7 +20,8 @@ import {
   SheetTrigger,
 } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Settings, Key, Palette, Zap, RotateCcw, ExternalLink, Check, Eye, EyeOff } from "lucide-react";
+import { Settings, Key, Zap, RotateCcw, ExternalLink, Check, Eye, EyeOff } from "lucide-react";
+import { toast } from "sonner";
 
 interface SettingsPanelProps {
   trigger?: React.ReactNode;
@@ -33,15 +35,24 @@ export function SettingsPanel({ trigger }: SettingsPanelProps) {
   const [localAnthropic, setLocalAnthropic] = useState(apiKeys.anthropic || "");
   const [saved, setSaved] = useState<string | null>(null);
 
-  const handleSaveKey = (provider: "openai" | "anthropic", value: string) => {
-    setApiKey(provider, value);
-    setSaved(provider);
-    setTimeout(() => setSaved(null), 2000);
+  const handleSaveKey = async (
+    provider: "openai" | "anthropic",
+    value: string,
+  ) => {
+    try {
+      await setApiKey(provider, value);
+      setSaved(provider);
+      setTimeout(() => setSaved(null), 2000);
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Could not save the API key",
+      );
+    }
   };
 
   return (
     <Sheet>
-      <SheetTrigger asChild>
+      <SheetTrigger asChild aria-label="Open settings">
         {trigger ?? (
           <Button variant="ghost" size="icon" className="h-8 w-8">
             <Settings className="w-4 h-4" />
@@ -52,19 +63,15 @@ export function SettingsPanel({ trigger }: SettingsPanelProps) {
         <SheetHeader>
           <SheetTitle className="font-heading">Settings</SheetTitle>
           <SheetDescription>
-            Configure <span className="font-logo">Stud</span> to your preferences
+            Configure <span className="font-logo">{BRAND.name}</span> to your preferences
           </SheetDescription>
         </SheetHeader>
 
         <Tabs defaultValue="api" className="mt-6">
-          <TabsList className="grid w-full grid-cols-3">
+          <TabsList className="grid w-full grid-cols-2">
             <TabsTrigger value="api" className="gap-1.5">
               <Key className="w-3.5 h-3.5" />
               API Keys
-            </TabsTrigger>
-            <TabsTrigger value="ui" className="gap-1.5">
-              <Palette className="w-3.5 h-3.5" />
-              Interface
             </TabsTrigger>
             <TabsTrigger value="behavior" className="gap-1.5">
               <Zap className="w-3.5 h-3.5" />
@@ -102,6 +109,7 @@ export function SettingsPanel({ trigger }: SettingsPanelProps) {
                   <button
                     type="button"
                     onClick={() => setShowOpenAIKey(!showOpenAIKey)}
+                    aria-label={showOpenAIKey ? "Hide OpenAI API key" : "Show OpenAI API key"}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     {showOpenAIKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -109,7 +117,7 @@ export function SettingsPanel({ trigger }: SettingsPanelProps) {
                 </div>
                 <Button
                   size="sm"
-                  onClick={() => handleSaveKey("openai", localOpenAI)}
+                  onClick={() => void handleSaveKey("openai", localOpenAI)}
                   disabled={localOpenAI === apiKeys.openai}
                   className="gap-1"
                 >
@@ -146,6 +154,7 @@ export function SettingsPanel({ trigger }: SettingsPanelProps) {
                   <button
                     type="button"
                     onClick={() => setShowAnthropicKey(!showAnthropicKey)}
+                    aria-label={showAnthropicKey ? "Hide Anthropic API key" : "Show Anthropic API key"}
                     className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     {showAnthropicKey ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
@@ -153,7 +162,7 @@ export function SettingsPanel({ trigger }: SettingsPanelProps) {
                 </div>
                 <Button
                   size="sm"
-                  onClick={() => handleSaveKey("anthropic", localAnthropic)}
+                  onClick={() => void handleSaveKey("anthropic", localAnthropic)}
                   disabled={localAnthropic === apiKeys.anthropic}
                   className="gap-1"
                 >
@@ -171,58 +180,20 @@ export function SettingsPanel({ trigger }: SettingsPanelProps) {
             </div>
           </TabsContent>
 
-          {/* UI Tab */}
-          <TabsContent value="ui" className="mt-4 space-y-4">
-            <SettingToggle
-              label="Animations"
-              description="Enable smooth animations and transitions"
-              checked={appSettings.animationsEnabled}
-              onCheckedChange={(checked) => updateAppSettings({ animationsEnabled: checked })}
-            />
-
-            <SettingToggle
-              label="Sound Effects"
-              description="Play sounds for notifications and actions"
-              checked={appSettings.soundEnabled}
-              onCheckedChange={(checked) => updateAppSettings({ soundEnabled: checked })}
-            />
-
-            <SettingToggle
-              label="Compact Mode"
-              description="Reduce spacing for more content on screen"
-              checked={appSettings.compactMode}
-              onCheckedChange={(checked) => updateAppSettings({ compactMode: checked })}
-            />
-
-            <SettingToggle
-              label="Show Tool Details"
-              description="Display expanded tool call information"
-              checked={appSettings.showToolDetails}
-              onCheckedChange={(checked) => updateAppSettings({ showToolDetails: checked })}
-            />
-          </TabsContent>
-
           {/* Behavior Tab */}
           <TabsContent value="behavior" className="mt-4 space-y-4">
             <SettingToggle
-              label="Auto-scroll Chat"
-              description="Automatically scroll to new messages"
-              checked={appSettings.autoScrollChat}
-              onCheckedChange={(checked) => updateAppSettings({ autoScrollChat: checked })}
+              label="Automatic Planning"
+              description="Create a structured plan before complex Studio changes"
+              checked={appSettings.autoPlan}
+              onCheckedChange={(checked) => updateAppSettings({ autoPlan: checked })}
             />
 
             <SettingToggle
-              label="Confirm Destructive Actions"
-              description="Ask before deleting instances or scripts"
+              label="Confirm Studio Changes"
+              description="Ask once before the first Studio mutation in each run"
               checked={appSettings.confirmDestructiveActions}
               onCheckedChange={(checked) => updateAppSettings({ confirmDestructiveActions: checked })}
-            />
-
-            <SettingToggle
-              label="Save Chat History"
-              description="Remember conversations between sessions"
-              checked={appSettings.saveHistory}
-              onCheckedChange={(checked) => updateAppSettings({ saveHistory: checked })}
             />
 
             <div className="pt-4 border-t">
@@ -270,7 +241,11 @@ function SettingToggle({
         <Label className="text-sm font-medium">{label}</Label>
         <p className="text-xs text-muted-foreground">{description}</p>
       </div>
-      <Switch checked={checked} onCheckedChange={onCheckedChange} />
+      <Switch
+        aria-label={label}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+      />
     </div>
   );
 }

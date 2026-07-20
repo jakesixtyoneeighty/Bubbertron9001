@@ -4,13 +4,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Stud** is an AI Agent for Roblox Studio - essentially "Cursor AI for Roblox." It connects AI assistants (OpenAI, Anthropic) to Roblox Studio via an HTTP bridge, enabling AI to manipulate instances, scripts, and properties in real-time through natural language.
+**Bubberton9001** (short name **B9**) is a skills-powered AI agent for Roblox Studio. It connects OpenAI, Anthropic, and ChatGPT subscription models to Studio through an HTTP bridge, then plans, researches, edits, verifies, and repairs work through natural language.
 
 ### Architecture
 
 ```
 ┌─────────────┐     HTTP      ┌─────────────┐     Polling     ┌─────────────┐
-│   Stud UI   │◄────────────►│   Bridge    │◄───────────────►│   Studio    │
+│    B9 UI    │◄────────────►│   Bridge    │◄───────────────►│   Studio    │
 │   (React)   │   :3001      │   (Rust)    │                 │  (Plugin)   │
 └─────────────┘              └─────────────┘                 └─────────────┘
       │
@@ -24,7 +24,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **React Frontend** (`src/`): Chat UI with shadcn/ui components, Zustand state management
 - **Rust Bridge** (`src-tauri/src/bridge.rs`): HTTP server on port 3001 that queues requests; uses oneshot channels for async request/response matching
-- **Studio Plugin** (`studio-plugin/stud-bridge.server.lua`): Lua plugin polls bridge every 100ms, executes commands, creates undo waypoints
+- **Studio Plugin** (`studio-plugin/bubberton9001-bridge.server.lua`): Luau plugin polls the bridge, executes commands, and creates undo waypoints
+- **Agent Runtime** (`src/lib/agent/`): planning, progress, verification, and repair tools
+- **Skill Runtime** (`src/lib/skills/` and `skills/`): compact catalog with lazy quick/full loading for 30 Roblox skills
 
 The polling pattern is necessary because Roblox Studio can only make HTTP requests, not receive them.
 
@@ -41,12 +43,16 @@ npx tsc --noEmit       # Type checking
 
 | Path | Purpose |
 |------|---------|
-| `src/lib/ai/providers.ts` | AI provider setup, `chat()` function with streaming and tool calling |
-| `src/lib/roblox/tools.ts` | 15+ AI SDK tools for Roblox (Zod schemas, `studioRequest()` calls) |
+| `src/lib/ai/providers.ts` | Provider runtime, planning policy, web search, streaming, and tool calling |
+| `src/lib/ai/system-prompt.ts` | B9 operating rules shared across providers |
+| `src/lib/agent/planning.ts` | Plan creation, progress updates, verification, and repair tools |
+| `src/lib/skills/` | Lazy allowlisted skill search and loading runtime |
+| `skills/` | 30 vendored Roblox Brain skills and deeper references |
+| `src/lib/roblox/tools.ts` | Studio, bulk, toolbox, and question tools |
 | `src/lib/roblox/client.ts` | HTTP client for bridge server communication |
-| `src-tauri/src/bridge.rs` | Bridge server endpoints: `/stud/request`, `/stud/poll`, `/stud/respond` |
-| `studio-plugin/stud-bridge.server.lua` | Lua plugin that handles all Roblox operations |
-| `src/stores/` | Zustand stores: `chat.ts`, `settings.ts`, `auth.ts`, `roblox.ts`, `plugin.ts` |
+| `src-tauri/src/bridge.rs` | Bridge endpoints under `/bubberton9001/*`; legacy `/stud/*` aliases remain for compatibility |
+| `studio-plugin/bubberton9001-bridge.server.lua` | Luau plugin that handles Studio operations |
+| `src/stores/` | Zustand state for chat, agent runs, settings, auth, Roblox, and plugin state |
 
 ## Roblox Tools Available to AI
 
@@ -54,19 +60,24 @@ Studio tools: `roblox_get_script`, `roblox_set_script`, `roblox_edit_script`, `r
 
 Bulk operations: `roblox_bulk_create`, `roblox_bulk_delete`, `roblox_bulk_set_property`
 
+Research and workflow: `skill_search`, `skill_load`, `web_search`, `agent_create_plan`, `agent_update_plan`, `agent_finish_plan`
+
 ## Project Context
 
-This project's UI is built with React + shadcn/ui + Tailwind for a clean, modern interface. When adding functionality, reference the opencode fork at `/Users/shauryagupta/Downloads/stud` which has a more complete feature set (28 tools, cloud APIs, toolbox integration, MCP support, LSP, multi-provider support for 20+ AI providers). That fork uses SolidJS + monorepo structure; adapt patterns to this React codebase when porting features.
+This project is a React/Tauri desktop app paired with a Roblox Studio plugin.
+Preserve the bounded bridge, allowlisted lazy-skill loader, visible planning
+state, and read-back verification loop. Treat this repository as the source of
+truth; do not depend on machine-specific forks or paths.
 
 ## Style Guide
 
-- Prefer `const` over `let`; use ternaries instead of if/else assignments
-- Early returns over else statements
-- Single-word variable names when possible
-- Avoid unnecessary destructuring - use `obj.a` instead of `const { a } = obj` to preserve context
-- Avoid `try`/`catch` where possible
-- Avoid `any` type
-- Rely on type inference; avoid explicit types unless needed for exports/clarity
+- Prefer clear names, small focused functions, and early returns where they
+  improve readability.
+- Preserve strict validation at provider, bridge, and Studio boundaries.
+- Avoid `any`; use explicit exported types and inferred local types.
+- Every mutation path must surface partial failures and have a later read-back
+  verification path.
+- Keep startup lean: lazy-load large optional UI and skill content.
 - Use parallel tool calls when applicable
 - **Never co-author yourself in git commits** - no `Co-Authored-By: Claude` lines
 

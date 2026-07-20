@@ -9,11 +9,18 @@ export interface ToolCall {
   error?: string;
 }
 
+export interface MessageSource {
+  id: string;
+  url: string;
+  title?: string;
+}
+
 export interface Message {
   id: string;
   role: "user" | "assistant";
   content: string;
   toolCalls?: ToolCall[];
+  sources?: MessageSource[];
   contextChips?: string[]; // Which context chips were applied to this message
   createdAt: Date;
 }
@@ -51,6 +58,7 @@ export interface ChatState {
   updateMessage: (id: string, content: string) => void;
   addToolCall: (messageId: string, toolCall: Omit<ToolCall, "status">) => void;
   updateToolCall: (messageId: string, toolCallId: string, update: Partial<ToolCall>) => void;
+  addSource: (messageId: string, source: MessageSource) => void;
   setStreaming: (streaming: boolean) => void;
   setError: (error: string | null) => void;
   clearMessages: () => void;
@@ -115,11 +123,27 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       ),
     })),
 
+  addSource: (messageId, source) =>
+    set((state) => ({
+      messages: state.messages.map((message) => {
+        if (message.id !== messageId) return message;
+        const sources = message.sources || [];
+        if (sources.some((item) => item.url === source.url)) return message;
+        return { ...message, sources: [...sources, source] };
+      }),
+    })),
+
   setStreaming: (streaming) => set({ isStreaming: streaming }),
   
   setError: (error) => set({ error }),
 
-  clearMessages: () => set({ messages: [] }),
+  clearMessages: () =>
+    set({
+      messages: [],
+      error: null,
+      pendingQuestion: null,
+      questionResolver: null,
+    }),
 
   // Question handling
   setPendingQuestion: (question) => set({ pendingQuestion: question }),

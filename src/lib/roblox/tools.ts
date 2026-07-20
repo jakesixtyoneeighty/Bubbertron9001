@@ -4,10 +4,26 @@
  * These tools allow the AI to interact with Roblox Studio via the bridge server.
  */
 
-import { tool } from "ai"
+import { tool, type ToolExecutionOptions } from "ai"
 import { z } from "zod"
 import { studioRequest, isStudioConnected, notConnectedError } from "./client"
-import { searchToolbox, getAssetDetails, type AssetCategory } from "./toolbox"
+import {
+  searchToolbox,
+  getAssetDetails,
+  type AssetCategory,
+  type ToolboxAsset,
+} from "./toolbox"
+import { useAgentStore } from "@/stores/agent"
+import { useSettingsStore } from "@/stores/settings"
+import {
+  askQuestions,
+  type AskUserQuestion,
+} from "./questions"
+
+export {
+  cancelPendingQuestions,
+  setAskUserHandler,
+} from "./questions"
 
 // ============================================================================
 // Types
@@ -32,6 +48,26 @@ interface PropertyInfo {
   type: string
 }
 
+interface ImportedScriptInfo {
+  name: string
+  className: string
+  relativePath: string
+  quarantined: boolean
+  wasEnabled?: boolean
+}
+
+interface InsertedAssetInfo {
+  path: string
+  name: string
+  scripts?: unknown
+  scriptsQuarantined?: unknown
+}
+
+const studioPathSchema = z.string().min(1).max(512)
+const shortTextSchema = z.string().min(1).max(200)
+const propertyValueSchema = z.string().max(4_000)
+const scriptTextSchema = z.string().max(500_000)
+
 // ============================================================================
 // Script Tools
 // ============================================================================
@@ -47,14 +83,21 @@ Examples:
 - game.ReplicatedStorage.Modules.Utils
 - game.Workspace.SpawnLocation.TouchScript`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path to the script (e.g. game.ServerScriptService.MainScript)"),
+    path: studioPathSchema.describe("Full instance path to the script (e.g. game.ServerScriptService.MainScript)"),
   }),
-  execute: async ({ path }: { path: string }) => {
+  execute: async (
+    { path }: { path: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<ScriptContent>("/script/get", { path })
+    const result = await studioRequest<ScriptContent>(
+      "/script/get",
+      { path },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -78,15 +121,22 @@ For partial edits, consider using roblox_edit_script instead.
 
 The path should be the full instance path from game root.`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path to the script"),
-    source: z.string().describe("The new source code for the script"),
+    path: studioPathSchema.describe("Full instance path to the script"),
+    source: scriptTextSchema.describe("The new source code for the script"),
   }),
-  execute: async ({ path, source }: { path: string; source: string }) => {
+  execute: async (
+    { path, source }: { path: string; source: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ path: string }>("/script/set", { path, source })
+    const result = await studioRequest<{ path: string }>(
+      "/script/set",
+      { path, source },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -107,11 +157,18 @@ Example:
   oldCode: "local speed = 10"
   newCode: "local speed = 20"`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path to the script"),
-    oldCode: z.string().describe("The exact code to find and replace"),
-    newCode: z.string().describe("The new code to replace it with"),
+    path: studioPathSchema.describe("Full instance path to the script"),
+    oldCode: scriptTextSchema.min(1).describe("The exact code to find and replace"),
+    newCode: scriptTextSchema.describe("The new code to replace it with"),
   }),
-  execute: async ({ path, oldCode, newCode }: { path: string; oldCode: string; newCode: string }) => {
+  execute: async (
+    {
+      path,
+      oldCode,
+      newCode,
+    }: { path: string; oldCode: string; newCode: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
@@ -120,7 +177,7 @@ Example:
       path,
       oldCode,
       newCode,
-    })
+    }, options?.abortSignal)
 
     if (!result.success) {
       return { error: result.error }
@@ -145,15 +202,22 @@ Examples:
 - game.ServerScriptService
 - game.Players.Player1.Backpack`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path (e.g. game.Workspace)"),
+    path: studioPathSchema.describe("Full instance path (e.g. game.Workspace)"),
     recursive: z.boolean().optional().describe("If true, get all descendants recursively"),
   }),
-  execute: async ({ path, recursive = false }: { path: string; recursive?: boolean }) => {
+  execute: async (
+    { path, recursive = false }: { path: string; recursive?: boolean },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<InstanceInfo[]>("/instance/children", { path, recursive })
+    const result = await studioRequest<InstanceInfo[]>(
+      "/instance/children",
+      { path, recursive },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -181,14 +245,21 @@ export const robloxGetProperties = tool({
 Returns a list of property names, values, and types.
 Useful for understanding what can be modified on an instance.`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path"),
+    path: studioPathSchema.describe("Full instance path"),
   }),
-  execute: async ({ path }: { path: string }) => {
+  execute: async (
+    { path }: { path: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<PropertyInfo[]>("/instance/properties", { path })
+    const result = await studioRequest<PropertyInfo[]>(
+      "/instance/properties",
+      { path },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -209,16 +280,27 @@ The value is parsed based on the property type:
 - BrickColor: "Bright red"
 - Enum: "Enum.Material.Plastic"`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path"),
-    property: z.string().describe("Property name to set"),
-    value: z.string().describe("New value for the property"),
+    path: studioPathSchema.describe("Full instance path"),
+    property: shortTextSchema.describe("Property name to set"),
+    value: propertyValueSchema.describe("New value for the property"),
   }),
-  execute: async ({ path, property, value }: { path: string; property: string; value: string }) => {
+  execute: async (
+    {
+      path,
+      property,
+      value,
+    }: { path: string; property: string; value: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ path: string }>("/instance/set", { path, property, value })
+    const result = await studioRequest<{ path: string }>(
+      "/instance/set",
+      { path, property, value },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -237,16 +319,27 @@ Common class names:
 - Values: StringValue, IntValue, BoolValue, ObjectValue
 - Other: Folder, Model, RemoteEvent, RemoteFunction`,
   inputSchema: z.object({
-    className: z.string().describe("The class name of the instance to create"),
-    parent: z.string().describe("Full path to the parent instance"),
-    name: z.string().optional().describe("Name for the new instance"),
+    className: shortTextSchema.describe("The class name of the instance to create"),
+    parent: studioPathSchema.describe("Full path to the parent instance"),
+    name: shortTextSchema.optional().describe("Name for the new instance"),
   }),
-  execute: async ({ className, parent, name }: { className: string; parent: string; name?: string }) => {
+  execute: async (
+    {
+      className,
+      parent,
+      name,
+    }: { className: string; parent: string; name?: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ path: string }>("/instance/create", { className, parent, name })
+    const result = await studioRequest<{ path: string }>(
+      "/instance/create",
+      { className, parent, name },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -261,14 +354,21 @@ export const robloxDelete = tool({
 This permanently removes the instance and all its descendants.
 Use with caution - this cannot be undone through the tool.`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path to delete"),
+    path: studioPathSchema.describe("Full instance path to delete"),
   }),
-  execute: async ({ path }: { path: string }) => {
+  execute: async (
+    { path }: { path: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ deleted: string }>("/instance/delete", { path })
+    const result = await studioRequest<{ deleted: string }>(
+      "/instance/delete",
+      { path },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -283,15 +383,22 @@ export const robloxClone = tool({
 Creates a deep copy of the instance and all its descendants.
 If parent is not specified, the clone is placed in the same parent as the original.`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path to clone"),
-    parent: z.string().optional().describe("Optional new parent path for the clone"),
+    path: studioPathSchema.describe("Full instance path to clone"),
+    parent: studioPathSchema.optional().describe("Optional new parent path for the clone"),
   }),
-  execute: async ({ path, parent }: { path: string; parent?: string }) => {
+  execute: async (
+    { path, parent }: { path: string; parent?: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ path: string }>("/instance/clone", { path, parent })
+    const result = await studioRequest<{ path: string }>(
+      "/instance/clone",
+      { path, parent },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -306,10 +413,10 @@ export const robloxSearch = tool({
 At least one of name or className must be provided.
 Name matching is case-insensitive and supports partial matches.`,
   inputSchema: z.object({
-    root: z.string().optional().describe("Root path to search from (default: game)"),
-    name: z.string().optional().describe("Name pattern to match"),
-    className: z.string().optional().describe("Class name to filter by"),
-    limit: z.number().optional().describe("Maximum results (default: 50)"),
+    root: studioPathSchema.optional().describe("Root path to search from (default: game)"),
+    name: shortTextSchema.optional().describe("Name pattern to match"),
+    className: shortTextSchema.optional().describe("Class name to filter by"),
+    limit: z.number().int().min(1).max(200).optional().describe("Maximum results (default: 50)"),
   }),
   execute: async ({
     root = "game",
@@ -321,7 +428,7 @@ Name matching is case-insensitive and supports partial matches.`,
     name?: string
     className?: string
     limit?: number
-  }) => {
+  }, options?: ToolExecutionOptions) => {
     if (!name && !className) {
       return { error: "At least one of name or className must be provided" }
     }
@@ -330,7 +437,11 @@ Name matching is case-insensitive and supports partial matches.`,
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<InstanceInfo[]>("/instance/search", { root, name, className, limit })
+    const result = await studioRequest<InstanceInfo[]>(
+      "/instance/search",
+      { root, name, className, limit },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -352,12 +463,16 @@ export const robloxGetSelection = tool({
 Returns the paths and class names of all selected instances.
 Useful for operating on what the user has selected in the Explorer.`,
   inputSchema: z.object({}),
-  execute: async () => {
+  execute: async (_input, options?: ToolExecutionOptions) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<InstanceInfo[]>("/selection/get")
+    const result = await studioRequest<InstanceInfo[]>(
+      "/selection/get",
+      undefined,
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -378,20 +493,29 @@ export const robloxRunCode = tool({
 
 The code runs in the command bar context with full access to game services.
 Use print() to output results - they will be captured and returned.
+Every invocation requires fresh user approval. Once Luau begins running, it
+cannot be forcibly cancelled, so prefer the structured Studio tools.
 
 Examples:
 - print(game.Workspace:GetChildren())
 - game.Players.LocalPlayer.Character:MoveTo(Vector3.new(0, 10, 0))
 - for _, part in game.Workspace:GetDescendants() do if part:IsA("BasePart") then part.Anchored = true end end`,
   inputSchema: z.object({
-    code: z.string().describe("Luau code to execute"),
+    code: scriptTextSchema.min(1).describe("Luau code to execute"),
   }),
-  execute: async ({ code }: { code: string }) => {
+  execute: async (
+    { code }: { code: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ output: string; error?: string }>("/code/run", { code })
+    const result = await studioRequest<{ output: string; error?: string }>(
+      "/code/run",
+      { code },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -414,15 +538,22 @@ Examples:
 - Move a part to a folder: path="game.Workspace.Part1", newParent="game.Workspace.MyFolder"
 - Move a script to ServerScriptService: path="game.Workspace.Script", newParent="game.ServerScriptService"`,
   inputSchema: z.object({
-    path: z.string().describe("Full instance path to move"),
-    newParent: z.string().describe("Full path to the new parent"),
+    path: studioPathSchema.describe("Full instance path to move"),
+    newParent: studioPathSchema.describe("Full path to the new parent"),
   }),
-  execute: async ({ path, newParent }: { path: string; newParent: string }) => {
+  execute: async (
+    { path, newParent }: { path: string; newParent: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ path: string }>("/instance/move", { path, newParent })
+    const result = await studioRequest<{ path: string }>(
+      "/instance/move",
+      { path, newParent },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
@@ -451,28 +582,52 @@ Example: Create 5 parts in workspace
     instances: z
       .array(
         z.object({
-          className: z.string().describe("Class name of the instance"),
-          parent: z.string().describe("Parent path"),
-          name: z.string().optional().describe("Optional name"),
+          className: shortTextSchema.describe("Class name of the instance"),
+          parent: studioPathSchema.describe("Parent path"),
+          name: shortTextSchema.optional().describe("Optional name"),
         })
       )
+      .min(1)
+      .max(200)
       .describe("Array of instances to create"),
   }),
   execute: async ({
     instances,
   }: {
     instances: Array<{ className: string; parent: string; name?: string }>
-  }) => {
+  }, options?: ToolExecutionOptions) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ created: string[] }>("/instance/bulk-create", { instances })
+    const result = await studioRequest<{
+      created: string[]
+      errors?: string[]
+    }>(
+      "/instance/bulk-create",
+      { instances },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
 
-    return { success: true, count: result.data.created.length, paths: result.data.created }
+    if (result.data.errors?.length) {
+      return {
+        error: `Bulk create partially failed: ${result.data.errors.join("; ")}`,
+        retryable: true,
+        partial: true,
+        count: result.data.created.length,
+        paths: result.data.created,
+        errors: result.data.errors,
+      }
+    }
+
+    return {
+      success: true,
+      count: result.data.created.length,
+      paths: result.data.created,
+    }
   },
 })
 
@@ -484,19 +639,48 @@ All specified instances and their descendants will be destroyed.
 
 WARNING: This cannot be undone through the tool.`,
   inputSchema: z.object({
-    paths: z.array(z.string()).describe("Array of instance paths to delete"),
+    paths: z
+      .array(studioPathSchema)
+      .min(1)
+      .max(200)
+      .describe("Array of instance paths to delete"),
   }),
-  execute: async ({ paths }: { paths: string[] }) => {
+  execute: async (
+    { paths }: { paths: string[] },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ deleted: string[] }>("/instance/bulk-delete", { paths })
+    const result = await studioRequest<{
+      deleted: string[]
+      errors?: string[]
+    }>(
+      "/instance/bulk-delete",
+      { paths },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
 
-    return { success: true, count: result.data.deleted.length, deleted: result.data.deleted }
+    if (result.data.errors?.length) {
+      return {
+        error: `Bulk delete partially failed: ${result.data.errors.join("; ")}`,
+        retryable: true,
+        partial: true,
+        count: result.data.deleted.length,
+        deleted: result.data.deleted,
+        errors: result.data.errors,
+      }
+    }
+
+    return {
+      success: true,
+      count: result.data.deleted.length,
+      deleted: result.data.deleted,
+    }
   },
 })
 
@@ -517,32 +701,44 @@ Example: Make all parts red and anchored
     operations: z
       .array(
         z.object({
-          path: z.string().describe("Instance path"),
-          property: z.string().describe("Property name"),
-          value: z.string().describe("New value"),
+          path: studioPathSchema.describe("Instance path"),
+          property: shortTextSchema.describe("Property name"),
+          value: propertyValueSchema.describe("New value"),
         })
       )
+      .min(1)
+      .max(200)
       .describe("Array of property set operations"),
   }),
   execute: async ({
     operations,
   }: {
     operations: Array<{ path: string; property: string; value: string }>
-  }) => {
+  }, options?: ToolExecutionOptions) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ updated: number; errors?: string[] }>("/instance/bulk-set", { operations })
+    const result = await studioRequest<{ updated: number; errors?: string[] }>(
+      "/instance/bulk-set",
+      { operations },
+      options?.abortSignal
+    )
     if (!result.success) {
       return { error: result.error }
     }
 
-    return {
-      success: true,
-      count: result.data.updated,
-      errors: result.data.errors,
+    if (result.data.errors?.length) {
+      return {
+        error: `Bulk property update partially failed: ${result.data.errors.join("; ")}`,
+        retryable: true,
+        partial: true,
+        count: result.data.updated,
+        errors: result.data.errors,
+      }
     }
+
+    return { success: true, count: result.data.updated }
   },
 })
 
@@ -550,11 +746,55 @@ Example: Make all parts red and anchored
 // Toolbox Tools
 // ============================================================================
 
+function assetSafetyDisclosure(asset: ToolboxAsset) {
+  const disclosures: string[] = []
+  if (asset.hasScripts) {
+    disclosures.push(
+      `${asset.scriptCount} script${asset.scriptCount === 1 ? "" : "s"} reported`
+    )
+  } else {
+    disclosures.push("no scripts reported")
+  }
+  if (asset.shouldSandbox) {
+    disclosures.push("Creator Store recommends sandboxing")
+  }
+  return disclosures.join("; ")
+}
+
+function normalizeScriptInventory(value: unknown): ImportedScriptInfo[] {
+  if (!Array.isArray(value)) return []
+
+  return value.flatMap((entry): ImportedScriptInfo[] => {
+    if (!entry || typeof entry !== "object") return []
+    const candidate = entry as Record<string, unknown>
+    if (
+      typeof candidate.name !== "string" ||
+      typeof candidate.className !== "string" ||
+      typeof candidate.relativePath !== "string" ||
+      typeof candidate.quarantined !== "boolean"
+    ) {
+      return []
+    }
+
+    return [{
+      name: candidate.name,
+      className: candidate.className,
+      relativePath: candidate.relativePath,
+      quarantined: candidate.quarantined,
+      ...(typeof candidate.wasEnabled === "boolean"
+        ? { wasEnabled: candidate.wasEnabled }
+        : {}),
+    }]
+  })
+}
+
 export const robloxToolboxSearch = tool({
   description: `Search the Roblox Creator Store for free models, decals, audio, or plugins.
 
 Use this to find pre-made assets that can be inserted into the game.
-Returns a list of assets with names, descriptions, creators, IDs, and THUMBNAIL URLs.
+Results are validated as free, purchasable assets of the requested type. Each
+result includes Creator Store script and sandbox metadata. Disclose those safety
+fields before asking the user to choose an asset.
 
 IMPORTANT: When presenting search results to the user via roblox_ask_user:
 - Use RICH OPTIONS with imageUrl for thumbnails (shows a visual grid)
@@ -566,9 +806,9 @@ Examples:
 - Search for "sword" audio
 - Search for "explosion" decals`,
   inputSchema: z.object({
-    query: z.string().describe("Search query"),
+    query: z.string().min(1).max(200).describe("Search query"),
     category: z.enum(["Model", "Decal", "Audio", "Plugin", "MeshPart"]).default("Model").describe("Asset category"),
-    limit: z.number().default(10).describe("Max results (1-50)"),
+    limit: z.number().int().min(1).max(50).default(10).describe("Max results (1-50)"),
   }),
   execute: async ({ query, category = "Model", limit = 10 }: { query: string; category?: AssetCategory; limit?: number }) => {
     const result = await searchToolbox(query, category, Math.min(limit, 50));
@@ -579,22 +819,34 @@ Examples:
 
     return {
       count: result.assets.length,
-      note: "Use roblox_ask_user with RICH OPTIONS format: { label, value, imageUrl, description } to show thumbnails. The value should be the asset ID.",
-      results: result.assets.map((asset) => ({
-        id: asset.id,
-        name: asset.name,
-        thumbnailUrl: asset.thumbnailUrl,
-        description: asset.description.slice(0, 100),
-        creator: asset.creatorName,
-        favorites: asset.favoriteCount,
-        // Pre-formatted for ask_user rich options
-        askUserOption: {
-          label: asset.name,
-          value: String(asset.id),
-          imageUrl: asset.thumbnailUrl,
-          description: `by ${asset.creatorName}`,
-        },
-      })),
+      note: "Every result is free and purchasable. Show script/sandbox disclosures in the choice UI; inserted BaseScripts are disabled and inventoried by the Studio quarantine.",
+      results: result.assets.map((asset) => {
+        const safetyDisclosure = assetSafetyDisclosure(asset)
+        return {
+          id: asset.id,
+          name: asset.name,
+          category: asset.category,
+          assetTypeId: asset.assetTypeId,
+          thumbnailUrl: asset.thumbnailUrl,
+          description: asset.description.slice(0, 100),
+          creator: asset.creatorName,
+          votes: asset.voteCount,
+          upVotePercent: asset.upVotePercent,
+          free: asset.isFree,
+          purchasable: asset.purchasable,
+          hasScripts: asset.hasScripts,
+          scriptCount: asset.scriptCount,
+          shouldSandbox: asset.shouldSandbox,
+          safetyDisclosure,
+          // Pre-formatted for ask_user rich options
+          askUserOption: {
+            label: asset.name,
+            value: String(asset.id),
+            imageUrl: asset.thumbnailUrl,
+            description: `by ${asset.creatorName} · ${safetyDisclosure}`,
+          },
+        }
+      }),
     };
   },
 });
@@ -602,40 +854,78 @@ Examples:
 export const robloxInsertAsset = tool({
   description: `Insert a free model from the Roblox Creator Store into the game.
 
-Use the asset ID from toolbox search results.
-The model will be inserted as a child of the specified parent.
-
-Note: Only free models can be inserted. Some models may contain scripts.`,
+Use a model ID from roblox_toolbox_search. The asset is revalidated as a free,
+purchasable Creator Store model before insertion. Studio inventories every
+LuaSourceContainer and disables imported BaseScripts before parenting the model.
+Always disclose and review the returned script inventory; ModuleScripts are not
+active by themselves but must still be treated as untrusted code.`,
   inputSchema: z.object({
-    assetId: z.number().describe("Asset ID from toolbox search"),
-    parent: z.string().default("game.Workspace").describe("Parent path for the inserted model"),
+    assetId: z.number().int().positive().describe("Asset ID from toolbox search"),
+    parent: studioPathSchema.default("game.Workspace").describe("Parent path for the inserted model"),
   }),
-  execute: async ({ assetId, parent = "game.Workspace" }: { assetId: number; parent?: string }) => {
+  execute: async (
+    {
+      assetId,
+      parent = "game.Workspace",
+    }: { assetId: number; parent?: string },
+    options?: ToolExecutionOptions
+  ) => {
     if (!(await isStudioConnected())) {
       return { error: notConnectedError() };
     }
 
     // Get asset details first
-    const details = await getAssetDetails(assetId);
+    const details = await getAssetDetails(assetId, "Model");
     if (!details) {
-      return { error: `Could not find asset with ID ${assetId}` };
+      return {
+        error: `Asset ${assetId} is not a free, purchasable Creator Store model`,
+      };
     }
 
     // Request Studio to insert the asset
-    const result = await studioRequest<{ path: string; name: string }>("/asset/insert", {
-      assetId,
-      parent,
-    });
+    const result = await studioRequest<InsertedAssetInfo>(
+      "/asset/insert",
+      {
+        assetId,
+        parent,
+      },
+      options?.abortSignal
+    );
 
     if (!result.success) {
       return { error: result.error };
     }
+
+    const scripts = normalizeScriptInventory(result.data.scripts)
+    const scriptsQuarantined =
+      typeof result.data.scriptsQuarantined === "number" &&
+      Number.isInteger(result.data.scriptsQuarantined) &&
+      result.data.scriptsQuarantined >= 0
+        ? result.data.scriptsQuarantined
+        : 0
+    const hasScripts = details.hasScripts || scripts.length > 0
+    const metadataMismatch =
+      details.scriptCount !== scripts.length ||
+      details.hasScripts !== (scripts.length > 0)
+    const requiresScriptReview = hasScripts || details.shouldSandbox
+    const safetyNotice = requiresScriptReview
+      ? `${scriptsQuarantined} imported BaseScript${scriptsQuarantined === 1 ? "" : "s"} disabled. Review all ${scripts.length} detected script container${scripts.length === 1 ? "" : "s"} before enabling or requiring imported code.${details.shouldSandbox ? " Creator Store recommends sandboxing this asset." : ""}`
+      : "No scripts were reported by Creator Store or detected by Studio."
 
     return {
       success: true,
       path: result.data.path,
       name: result.data.name,
       assetName: details.name,
+      creator: details.creatorName,
+      hasScripts,
+      declaredScriptCount: details.scriptCount,
+      shouldSandbox: details.shouldSandbox,
+      scripts,
+      scriptsQuarantined,
+      metadataMismatch,
+      requiresScriptReview,
+      safetyNotice,
     };
   },
 });
@@ -644,26 +934,86 @@ Note: Only free models can be inserted. Some models may contain scripts.`,
 // Agentic Tools
 // ============================================================================
 
-// Types for ask_user options
-interface QuestionOption {
-  label: string;
-  value?: string;
-  imageUrl?: string;
-  description?: string;
+let approvedRunId: string | null = null;
+let pendingApproval:
+  | { runKey: string; promise: Promise<boolean> }
+  | null = null;
+
+async function confirmStudioChanges(
+  action: string,
+  signal?: AbortSignal,
+  reuseApprovalForRun = true
+) {
+  if (
+    reuseApprovalForRun &&
+    !useSettingsStore.getState().appSettings.confirmDestructiveActions
+  ) {
+    return true
+  }
+
+  const askForApproval = async () => {
+    const oneTimeLuauApproval = !reuseApprovalForRun
+    const answers = await askQuestions(
+      [
+        {
+          question: oneTimeLuauApproval
+            ? "Run this Luau code in Roblox Studio now? It can change anything in the project, and active Luau cannot be forcibly cancelled once execution begins."
+            : `Allow Bubberton9001 to change this Roblox Studio project for this run? First action: ${action}.`,
+          type: "single" as const,
+          options: [
+            {
+              label: oneTimeLuauApproval ? "Run once" : "Allow this run",
+              value: "allow",
+              description: oneTimeLuauApproval
+                ? "Execute this single Luau tool call."
+                : "Permit the planned Studio changes until this run ends.",
+            },
+            {
+              label: "Cancel",
+              value: "cancel",
+              description: "Stop before anything is changed.",
+            },
+          ],
+        },
+      ],
+      signal
+    )
+    return answers[0] === "allow"
+  }
+
+  // Arbitrary Luau can mutate anything and cannot be forcibly cancelled once
+  // execution begins, so it always requires a fresh, explicit decision.
+  if (!reuseApprovalForRun) {
+    return askForApproval()
+  }
+
+  const runId = useAgentStore.getState().runId
+  if (runId && approvedRunId === runId) {
+    return true
+  }
+
+  const runKey = runId || "unscoped"
+  if (pendingApproval?.runKey === runKey) {
+    return pendingApproval.promise
+  }
+
+  const promise = (async () => {
+    const approved = await askForApproval()
+    if (approved && runId) {
+      approvedRunId = runId
+    }
+    return approved
+  })()
+
+  pendingApproval = { runKey, promise }
+  try {
+    return await promise
+  } finally {
+    if (pendingApproval?.promise === promise) {
+      pendingApproval = null
+    }
+  }
 }
-
-interface AskUserQuestion {
-  question: string;
-  options?: (string | QuestionOption)[];
-  type: "single" | "multi" | "text";
-}
-
-// Global store reference for ask_user tool
-let askUserHandler: ((questions: AskUserQuestion[]) => Promise<(string | string[])[]>) | null = null;
-
-export const setAskUserHandler = (handler: typeof askUserHandler) => {
-  askUserHandler = handler;
-};
 
 export const robloxAskUser = tool({
   description: `Ask the user questions when you need clarification or input.
@@ -695,18 +1045,22 @@ Examples:
     questions: z
       .array(
         z.object({
-          question: z.string().describe("The question to ask the user"),
-          options: z.array(
-            z.union([
-              z.string(),
-              z.object({
-                label: z.string().describe("Display text"),
-                value: z.string().optional().describe("Return value (defaults to label)"),
-                imageUrl: z.string().optional().describe("Thumbnail URL"),
-                description: z.string().optional().describe("Short description"),
-              }),
-            ])
-          ).optional().describe("Options for single/multi choice - can be strings or {label, value, imageUrl, description}"),
+          question: z.string().min(1).max(500).describe("The question to ask the user"),
+          options: z
+            .array(
+              z.union([
+                z.string().min(1).max(200),
+                z.object({
+                  label: z.string().min(1).max(200).describe("Display text"),
+                  value: z.string().max(500).optional().describe("Return value (defaults to label)"),
+                  imageUrl: z.url().max(2_000).optional().describe("Thumbnail URL"),
+                  description: z.string().max(500).optional().describe("Short description"),
+                }),
+              ])
+            )
+            .max(50)
+            .optional()
+            .describe("Options for single/multi choice - can be strings or {label, value, imageUrl, description}"),
           type: z.enum(["single", "multi", "text"]).default("text").describe("Question type"),
         })
       )
@@ -714,16 +1068,15 @@ Examples:
       .max(4)
       .describe("1-4 questions to ask the user"),
   }),
-  execute: async ({
-    questions,
-  }: {
-    questions: AskUserQuestion[]
-  }) => {
-    if (!askUserHandler) {
-      return { error: "Question handler not initialized" }
-    }
-
-    const answers = await askUserHandler(questions)
+  execute: async (
+    {
+      questions,
+    }: {
+      questions: AskUserQuestion[]
+    },
+    options
+  ) => {
+    const answers = await askQuestions(questions, options.abortSignal)
 
     return {
       answered: true,
@@ -739,7 +1092,7 @@ Examples:
 // Export all tools
 // ============================================================================
 
-export const robloxTools = {
+const baseRobloxTools = {
   // Script tools
   roblox_get_script: robloxGetScript,
   roblox_set_script: robloxSetScript,
@@ -769,3 +1122,132 @@ export const robloxTools = {
   // Agentic tools
   roblox_ask_user: robloxAskUser,
 }
+
+type RobloxToolName = keyof typeof baseRobloxTools
+
+const approvalActions: Partial<Record<RobloxToolName, string>> = {
+  roblox_set_script: "replace script source",
+  roblox_edit_script: "edit script source",
+  roblox_set_property: "change instance properties",
+  roblox_create: "create instances",
+  roblox_delete: "delete instances",
+  roblox_clone: "clone instances",
+  roblox_run_code: "execute arbitrary Luau code",
+  roblox_move: "move instances",
+  roblox_bulk_create: "create multiple instances",
+  roblox_bulk_delete: "delete multiple instances",
+  roblox_bulk_set_property: "change multiple properties",
+  roblox_insert_asset: "insert a Creator Store asset",
+}
+
+const studioEvidenceKinds: Partial<
+  Record<RobloxToolName, "mutation" | "readback">
+> = {
+  roblox_get_script: "readback",
+  roblox_get_children: "readback",
+  roblox_get_properties: "readback",
+  roblox_search: "readback",
+  roblox_get_selection: "readback",
+  roblox_set_script: "mutation",
+  roblox_edit_script: "mutation",
+  roblox_set_property: "mutation",
+  roblox_create: "mutation",
+  roblox_delete: "mutation",
+  roblox_clone: "mutation",
+  roblox_run_code: "mutation",
+  roblox_move: "mutation",
+  roblox_bulk_create: "mutation",
+  roblox_bulk_delete: "mutation",
+  roblox_bulk_set_property: "mutation",
+  roblox_insert_asset: "mutation",
+}
+
+function hasToolError(output: unknown) {
+  return Boolean(
+    output &&
+      typeof output === "object" &&
+      "error" in output &&
+      output.error
+  )
+}
+
+function partialMutationApplied(output: unknown) {
+  if (!output || typeof output !== "object") return false
+  const result = output as {
+    partial?: unknown
+    count?: unknown
+    paths?: unknown
+    deleted?: unknown
+  }
+  return (
+    result.partial === true &&
+    ((typeof result.count === "number" && result.count > 0) ||
+      (Array.isArray(result.paths) && result.paths.length > 0) ||
+      (Array.isArray(result.deleted) && result.deleted.length > 0))
+  )
+}
+
+function withRunControls<T>(
+  toolName: RobloxToolName,
+  toolDefinition: T
+): T {
+  const action = approvalActions[toolName]
+  const evidenceKind = studioEvidenceKinds[toolName]
+  if (!action && !evidenceKind) return toolDefinition
+
+  const executable = toolDefinition as unknown as {
+    execute: (
+      input: unknown,
+      options?: ToolExecutionOptions
+    ) => Promise<unknown>
+  }
+  const originalExecute = executable.execute
+
+  return {
+    ...(toolDefinition as object),
+    execute: async (input: unknown, options?: ToolExecutionOptions) => {
+      if (action) {
+        const approved = await confirmStudioChanges(
+          action,
+          options?.abortSignal,
+          toolName !== "roblox_run_code"
+        )
+        if (!approved) {
+          return {
+            error:
+              toolName === "roblox_run_code"
+                ? "Luau execution was not approved. Active Luau cannot be forcibly cancelled once it starts."
+                : "Studio changes were not approved",
+            retryable: false,
+          }
+        }
+      }
+
+      const operation = evidenceKind
+        ? useAgentStore
+            .getState()
+            .beginStudioOperation(toolName, evidenceKind)
+        : null
+      const output = await originalExecute(input, options)
+
+      if (
+        operation &&
+        (!hasToolError(output) ||
+          (evidenceKind === "mutation" && partialMutationApplied(output)))
+      ) {
+        useAgentStore.getState().completeStudioOperation(operation)
+      }
+
+      return output
+    },
+  } as T
+}
+
+export const robloxTools = Object.fromEntries(
+  (Object.entries(baseRobloxTools) as Array<
+    [RobloxToolName, (typeof baseRobloxTools)[RobloxToolName]]
+  >).map(([name, toolDefinition]) => [
+    name,
+    withRunControls(name, toolDefinition),
+  ])
+) as typeof baseRobloxTools

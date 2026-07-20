@@ -1,16 +1,19 @@
 --[[
-	stud-bridge - Roblox Studio Plugin for Stud
+		Bubberton9001 Bridge - Roblox Studio Plugin for Bubberton9001
 	
-	This plugin connects Roblox Studio to the Stud desktop app,
+		This plugin connects Roblox Studio to the Bubberton9001 desktop app,
 	allowing AI-powered editing and manipulation of your game.
 	
 	Installation:
-	1. Copy this file to your Roblox Plugins folder
+	1. In Bubberton9001 Desktop, choose Install Automatically or
+	   Download Paired Plugin. Do not copy the raw repository template:
+	   its pairing placeholder is intentionally unable to connect.
+	2. If downloaded, move the paired file to your Roblox Plugins folder
 	   - Windows: %LOCALAPPDATA%\Roblox\Plugins
 	   - Mac: ~/Documents/Roblox/Plugins
-	2. Restart Roblox Studio
-	3. Enable HTTP requests in Game Settings > Security
-	4. Click the stud-bridge button to connect
+	3. Restart Roblox Studio
+	4. Enable HTTP requests in Game Settings > Security
+	5. Click the Bubberton9001 button to connect
 ]]
 
 local HttpService = game:GetService("HttpService")
@@ -19,34 +22,51 @@ local ScriptEditorService = game:GetService("ScriptEditorService")
 local ChangeHistoryService = game:GetService("ChangeHistoryService")
 local TweenService = game:GetService("TweenService")
 
-local PLUGIN_NAME = "stud-bridge"
-local PLUGIN_DISPLAY_NAME = "Stud"
-local POLL_URL = "http://localhost:3001/stud/poll"
-local RESPOND_URL = "http://localhost:3001/stud/respond"
+local PLUGIN_NAME = "bubberton9001-bridge"
+local PLUGIN_DISPLAY_NAME = "Bubberton9001"
+local POLL_URL = "http://localhost:3001/bubberton9001/poll"
+local RESPOND_URL = "http://localhost:3001/bubberton9001/respond"
+local DISCONNECT_URL = "http://localhost:3001/bubberton9001/disconnect"
+local PAIRING_SECRET = "__BUBBERTON9001_PAIRING_SECRET__"
+local SESSION_ID = HttpService:GenerateGUID(false)
+local POLL_SESSION_URL = POLL_URL .. "?session_id=" .. HttpService:UrlEncode(SESSION_ID)
 local MAX_ACTIVITY_LOG = 10
+local MAX_COMPLETED_REQUESTS = 100
+local MAX_TREE_RESULTS = 1000
+local MAX_SEARCH_RESULTS = 200
+local MAX_RUN_CODE_BYTES = 128 * 1024
+local MAX_CAPTURED_OUTPUT_LINES = 200
+local MAX_CAPTURED_OUTPUT_BYTES = 64 * 1024
+local MAX_IMPORTED_DESCENDANTS = 20000
+local MAX_IMPORTED_SCRIPT_INVENTORY = 1000
 
 -- State
 local isConnected = false
 local isConnecting = false
+local hasSessionConflict = false
+local hasPairingError = false
 local pollingEnabled = false
 local isProcessing = false
 local projectInfo = nil
 local activityLog = {}
+local inFlightRequestIds = {}
+local completedRequests = {}
+local completedRequestOrder = {}
 
 -- UI Elements
 local toolbar = plugin:CreateToolbar(PLUGIN_DISPLAY_NAME)
 local toggleButton = toolbar:CreateButton(
 	PLUGIN_DISPLAY_NAME,
-	"Connect to Stud AI",
+	"Connect to Bubberton9001",
 	"rbxassetid://4458901886" -- Generic connect icon
 )
 
--- Colors (cozy light theme to match Stud app)
+-- Colors (cozy light theme to match the Bubberton9001 app)
 local Colors = {
 	bg = Color3.fromRGB(250, 250, 250),
 	bgSecondary = Color3.fromRGB(245, 245, 245),
 	bgTertiary = Color3.fromRGB(240, 240, 240),
-	accent = Color3.fromRGB(139, 124, 246), -- Soft purple from Stud
+	accent = Color3.fromRGB(139, 124, 246), -- Bubberton9001 purple
 	accentHover = Color3.fromRGB(159, 144, 255),
 	success = Color3.fromRGB(34, 197, 94),
 	warning = Color3.fromRGB(250, 204, 21),
@@ -229,8 +249,8 @@ local function createWidget()
 		280    -- Min height
 	)
 	
-	widget = plugin:CreateDockWidgetPluginGui("StudBridge", info)
-	widget.Title = "stud-bridge"
+	widget = plugin:CreateDockWidgetPluginGui("Bubberton9001Bridge", info)
+	widget.Title = "Bubberton9001"
 	widget.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 	
 	-- Main container
@@ -460,11 +480,25 @@ local function updateUI()
 		subText.Text = "Executing AI command"
 		connectButton.Text = "Disconnect"
 		connectButton.BackgroundColor3 = Colors.error
+	elseif hasPairingError then
+		statusDot.BackgroundColor3 = Colors.error
+		if glow then glow.Color = Colors.error end
+		statusText.Text = "Plugin update required"
+		subText.Text = "Reinstall the plugin from Bubberton9001"
+		connectButton.Text = "Cancel"
+		connectButton.BackgroundColor3 = Colors.textMuted
+	elseif hasSessionConflict then
+		statusDot.BackgroundColor3 = Colors.warning
+		if glow then glow.Color = Colors.warning end
+		statusText.Text = "Another Studio is connected"
+		subText.Text = "Waiting for that window to disconnect"
+		connectButton.Text = "Cancel"
+		connectButton.BackgroundColor3 = Colors.textMuted
 	elseif isConnecting then
 		statusDot.BackgroundColor3 = Colors.warning
 		if glow then glow.Color = Colors.warning end
 		statusText.Text = "Connecting..."
-		subText.Text = "Looking for Stud Desktop"
+		subText.Text = "Looking for Bubberton9001 Desktop"
 		connectButton.Text = "Cancel"
 		connectButton.BackgroundColor3 = Colors.textMuted
 	elseif isConnected then
@@ -483,7 +517,7 @@ local function updateUI()
 		connectButton.BackgroundColor3 = Colors.accent
 	end
 	
-	toggleButton:SetActive(isConnected or isConnecting)
+	toggleButton:SetActive(isConnected or isConnecting or hasSessionConflict or hasPairingError)
 end
 
 -- Utility functions
@@ -495,32 +529,109 @@ local function jsonDecode(str)
 	return HttpService:JSONDecode(str)
 end
 
-local function getInstanceFromPath(path)
-	local parts = string.split(path, ".")
-	if #parts < 2 or parts[1] ~= "game" then
-		return nil
+local function validateAddressableName(name)
+	if type(name) ~= "string" or name == "" then
+		return false, "Instance names must be non-empty strings"
 	end
-	
+	if string.find(name, ".", 1, true) then
+		return false, "Instance names containing '.' are not addressable by this bridge"
+	end
+	return true
+end
+
+local function assertAddressableName(name)
+	local valid, nameError = validateAddressableName(name)
+	if not valid then
+		error(nameError, 2)
+	end
+end
+
+local function assertUniqueChildName(parent, name, ignoredInstance)
+	for _, child in ipairs(parent:GetChildren()) do
+		if child ~= ignoredInstance and child.Name == name then
+			error("A child named '" .. name .. "' already exists under " .. parent:GetFullName(), 2)
+		end
+	end
+end
+
+local function getInstanceFromPath(path)
+	if type(path) ~= "string" or path == "" then
+		return nil, "Path must be a non-empty string"
+	end
+
+	local parts = string.split(path, ".")
+	if parts[1] ~= "game" then
+		return nil, "Path must start with 'game'"
+	end
+	if #parts == 1 then
+		return game
+	end
+		
 	local current = game
 	for i = 2, #parts do
-		local child = current:FindFirstChild(parts[i])
-		if not child then
-			return nil
+		local segment = parts[i]
+		if segment == "" then
+			return nil, "Path contains an empty segment"
 		end
-		current = child
+
+		local remainingPath = table.concat(parts, ".", i)
+		local matches = {}
+		for _, child in ipairs(current:GetChildren()) do
+			if string.find(child.Name, ".", 1, true) then
+				if remainingPath == child.Name or string.sub(remainingPath, 1, #child.Name + 1) == child.Name .. "." then
+					return nil, "Path is ambiguous because '" .. child.Name .. "' contains '.'"
+				end
+			end
+			if child.Name == segment then
+				table.insert(matches, child)
+			end
+		end
+
+		if #matches == 0 then
+			return nil, "No child named '" .. segment .. "' under " .. current:GetFullName()
+		end
+		if #matches > 1 then
+			return nil, "Ambiguous path: multiple children named '" .. segment .. "' under " .. current:GetFullName()
+		end
+		current = matches[1]
 	end
-	
+		
 	return current
 end
 
+local function requireInstanceFromPath(path, label)
+	local instance, pathError = getInstanceFromPath(path)
+	if not instance then
+		error((label or "Instance") .. " path error: " .. pathError, 2)
+	end
+	return instance
+end
+
 local function getInstancePath(instance)
+	local target = instance
 	local parts = {}
 	local current = instance
 	while current and current ~= game do
+		assertAddressableName(current.Name)
+		if not current.Parent then
+			error("Instance is not a descendant of game")
+		end
+		assertUniqueChildName(current.Parent, current.Name, current)
 		table.insert(parts, 1, current.Name)
 		current = current.Parent
 	end
-	return "game." .. table.concat(parts, ".")
+	if current ~= game then
+		error("Instance is not a descendant of game")
+	end
+	if #parts == 0 then
+		return "game"
+	end
+	local path = "game." .. table.concat(parts, ".")
+	local resolved, pathError = getInstanceFromPath(path)
+	if resolved ~= target then
+		error("Instance path is not uniquely addressable: " .. (pathError or path))
+	end
+	return path
 end
 
 local function instanceToInfo(instance, includeChildren)
@@ -548,10 +659,7 @@ handlers["/ping"] = function()
 end
 
 handlers["/script/get"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
-	end
+	local instance = requireInstanceFromPath(data.path, "Script")
 	
 	if not instance:IsA("LuaSourceContainer") then
 		error("Not a script: " .. data.path)
@@ -570,10 +678,7 @@ handlers["/script/get"] = function(data)
 end
 
 handlers["/script/set"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
-	end
+	local instance = requireInstanceFromPath(data.path, "Script")
 	
 	if not instance:IsA("LuaSourceContainer") then
 		error("Not a script: " .. data.path)
@@ -587,58 +692,67 @@ handlers["/script/set"] = function(data)
 end
 
 handlers["/script/edit"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
-	end
+	local instance = requireInstanceFromPath(data.path, "Script")
 	
 	if not instance:IsA("LuaSourceContainer") then
 		error("Not a script: " .. data.path)
 	end
-	
-	local source = ScriptEditorService:GetEditorSource(instance)
-	if not source then
-		source = instance.Source
+
+	if type(data.oldCode) ~= "string" or data.oldCode == "" then
+		error("oldCode must be a non-empty string")
 	end
-	
-	local newSource, count = string.gsub(source, data.oldCode, data.newCode)
-	if count == 0 then
-		error("Code not found in script")
+	if type(data.newCode) ~= "string" then
+		error("newCode must be a string")
 	end
-	
-	ScriptEditorService:UpdateSourceAsync(instance, function()
-		return newSource
+
+	local replaced = 0
+	ScriptEditorService:UpdateSourceAsync(instance, function(currentSource)
+		local startIndex, endIndex = string.find(currentSource, data.oldCode, 1, true)
+		if not startIndex then
+			error("Code not found in script")
+		end
+
+		local nextMatch = string.find(currentSource, data.oldCode, startIndex + 1, true)
+		if nextMatch then
+			error("Code appears more than once; provide a unique oldCode value")
+		end
+
+		replaced = 1
+		return string.sub(currentSource, 1, startIndex - 1)
+			.. data.newCode
+			.. string.sub(currentSource, endIndex + 1)
 	end)
-	
-	return { path = getInstancePath(instance), replaced = count }
+
+	return { path = getInstancePath(instance), replaced = replaced }
 end
 
 handlers["/instance/children"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
+	local instance = requireInstanceFromPath(data.path)
+	local instances = data.recursive and instance:GetDescendants() or instance:GetChildren()
+	local limit = data.limit or MAX_TREE_RESULTS
+	if type(limit) ~= "number" or limit % 1 ~= 0 or limit < 1 or limit > MAX_TREE_RESULTS then
+		error("limit must be an integer from 1 to " .. MAX_TREE_RESULTS)
 	end
-	
+	if #instances > limit then
+		error(
+			"Inspection matched "
+				.. #instances
+				.. " instances, exceeding the "
+				.. limit
+				.. "-instance limit; inspect a narrower path"
+		)
+	end
+
 	local children = {}
-	
-	if data.recursive then
-		for _, child in ipairs(instance:GetDescendants()) do
-			table.insert(children, instanceToInfo(child, false))
-		end
-	else
-		for _, child in ipairs(instance:GetChildren()) do
-			table.insert(children, instanceToInfo(child, false))
-		end
+	for _, child in ipairs(instances) do
+		table.insert(children, instanceToInfo(child, false))
 	end
-	
+
 	return children
 end
 
 handlers["/instance/properties"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
-	end
+	local instance = requireInstanceFromPath(data.path)
 	
 	local props = {}
 	local commonProps = {"Name", "ClassName", "Parent"}
@@ -674,13 +788,19 @@ handlers["/instance/properties"] = function(data)
 end
 
 handlers["/instance/set"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
-	end
-	
+	local instance = requireInstanceFromPath(data.path)
+		
 	local value = data.value
-	
+	if data.property == "Name" then
+		if instance == game then
+			error("The game root cannot be renamed")
+		end
+		assertAddressableName(value)
+		assertUniqueChildName(instance.Parent, value, instance)
+		instance.Name = value
+		return { path = getInstancePath(instance) }
+	end
+		
 	if value == "true" then
 		value = true
 	elseif value == "false" then
@@ -718,25 +838,21 @@ handlers["/instance/set"] = function(data)
 end
 
 handlers["/instance/create"] = function(data)
-	local parent = getInstanceFromPath(data.parent)
-	if not parent then
-		error("Parent not found: " .. data.parent)
-	end
-	
+	local parent = requireInstanceFromPath(data.parent, "Parent")
+		
 	local instance = Instance.new(data.className)
 	if data.name then
 		instance.Name = data.name
 	end
+	assertAddressableName(instance.Name)
+	assertUniqueChildName(parent, instance.Name)
 	instance.Parent = parent
 	
 	return { path = getInstancePath(instance) }
 end
 
 handlers["/instance/delete"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
-	end
+	local instance = requireInstanceFromPath(data.path)
 	
 	local path = getInstancePath(instance)
 	instance:Destroy()
@@ -745,38 +861,27 @@ handlers["/instance/delete"] = function(data)
 end
 
 handlers["/instance/clone"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
-	end
-	
-	local clone = instance:Clone()
-	
+	local instance = requireInstanceFromPath(data.path)
+	local parent
 	if data.parent then
-		local parent = getInstanceFromPath(data.parent)
-		if parent then
-			clone.Parent = parent
-		else
-			error("Parent not found: " .. data.parent)
-		end
+		parent = requireInstanceFromPath(data.parent, "Parent")
 	else
-		clone.Parent = instance.Parent
+		parent = instance.Parent
 	end
+	assertUniqueChildName(parent, instance.Name)
+
+	local clone = instance:Clone()
+	clone.Parent = parent
 	
 	return { path = getInstancePath(clone) }
 end
 
 handlers["/instance/move"] = function(data)
-	local instance = getInstanceFromPath(data.path)
-	if not instance then
-		error("Instance not found: " .. data.path)
-	end
-	
-	local newParent = getInstanceFromPath(data.newParent)
-	if not newParent then
-		error("Parent not found: " .. data.newParent)
-	end
-	
+	local instance = requireInstanceFromPath(data.path)
+		
+	local newParent = requireInstanceFromPath(data.newParent, "Parent")
+	assertUniqueChildName(newParent, instance.Name, instance)
+		
 	instance.Parent = newParent
 	
 	return { path = getInstancePath(instance) }
@@ -784,35 +889,46 @@ end
 
 handlers["/instance/bulk-create"] = function(data)
 	local created = {}
-	
+	local errors = {}
+		
 	for _, item in ipairs(data.instances) do
-		local parent = getInstanceFromPath(item.parent)
-		if parent then
+		local success, result = pcall(function()
+			local parent = requireInstanceFromPath(item.parent, "Parent")
 			local instance = Instance.new(item.className)
 			if item.name then
 				instance.Name = item.name
 			end
+			assertAddressableName(instance.Name)
+			assertUniqueChildName(parent, instance.Name)
 			instance.Parent = parent
-			table.insert(created, getInstancePath(instance))
+			return getInstancePath(instance)
+		end)
+		if success then
+			table.insert(created, result)
+		else
+			table.insert(errors, tostring(result))
 		end
 	end
-	
-	return { created = created }
+		
+	return { created = created, errors = errors }
 end
 
 handlers["/instance/bulk-delete"] = function(data)
 	local deleted = {}
-	
+	local errors = {}
+		
 	for _, path in ipairs(data.paths) do
-		local instance = getInstanceFromPath(path)
+		local instance, pathError = getInstanceFromPath(path)
 		if instance then
 			local fullPath = getInstancePath(instance)
 			instance:Destroy()
 			table.insert(deleted, fullPath)
+		else
+			table.insert(errors, path .. ": " .. pathError)
 		end
 	end
-	
-	return { deleted = deleted }
+		
+	return { deleted = deleted, errors = errors }
 end
 
 handlers["/instance/bulk-set"] = function(data)
@@ -820,12 +936,21 @@ handlers["/instance/bulk-set"] = function(data)
 	local errors = {}
 	
 	for _, op in ipairs(data.operations) do
-		local instance = getInstanceFromPath(op.path)
+		local instance, pathError = getInstanceFromPath(op.path)
 		if not instance then
-			table.insert(errors, "Not found: " .. op.path)
+			table.insert(errors, op.path .. ": " .. pathError)
 		else
 			local success, err = pcall(function()
 				local value = op.value
+				if op.property == "Name" then
+					if instance == game then
+						error("The game root cannot be renamed")
+					end
+					assertAddressableName(value)
+					assertUniqueChildName(instance.Parent, value, instance)
+					instance.Name = value
+					return
+				end
 				
 				-- Parse value based on type
 				if value == "true" then
@@ -874,13 +999,13 @@ handlers["/instance/bulk-set"] = function(data)
 end
 
 handlers["/instance/search"] = function(data)
-	local root = getInstanceFromPath(data.root or "game")
-	if not root then
-		error("Root not found: " .. (data.root or "game"))
-	end
+	local root = requireInstanceFromPath(data.root or "game", "Root")
 	
 	local results = {}
 	local limit = data.limit or 50
+	if type(limit) ~= "number" or limit % 1 ~= 0 or limit < 1 or limit > MAX_SEARCH_RESULTS then
+		error("limit must be an integer from 1 to " .. MAX_SEARCH_RESULTS)
+	end
 	
 	for _, instance in ipairs(root:GetDescendants()) do
 		if #results >= limit then
@@ -917,46 +1042,125 @@ handlers["/selection/get"] = function()
 end
 
 handlers["/code/run"] = function(data)
+	if type(data.code) ~= "string" or data.code == "" then
+		error("code must be a non-empty string")
+	end
+	if #data.code > MAX_RUN_CODE_BYTES then
+		error("code exceeds the " .. MAX_RUN_CODE_BYTES .. "-byte limit")
+	end
+
 	local output = {}
-	
-	local oldPrint = print
-	print = function(...)
-		local args = {...}
-		local str = ""
-		for i, v in ipairs(args) do
-			if i > 1 then str = str .. "\t" end
-			str = str .. tostring(v)
+	local outputBytes = 0
+	local outputTruncated = false
+	local function capturePrint(...)
+		if outputTruncated then
+			return
 		end
+
+		local str = ""
+		for i = 1, select("#", ...) do
+			if i > 1 then str = str .. "\t" end
+			str = str .. tostring(select(i, ...))
+		end
+		if #output >= MAX_CAPTURED_OUTPUT_LINES or outputBytes + #str > MAX_CAPTURED_OUTPUT_BYTES then
+			outputTruncated = true
+			table.insert(output, "[output truncated]")
+			return
+		end
+
+		outputBytes = outputBytes + #str
 		table.insert(output, str)
 	end
-	
-	local success, result = pcall(function()
-		local fn, err = loadstring(data.code)
-		if not fn then
-			error(err)
-		end
-		return fn()
-	end)
-	
-	print = oldPrint
-	
+
+	local fn, compileError = loadstring(data.code, "Bubberton9001 agent code")
+	if not fn then
+		error(compileError)
+	end
+
+	-- Keep output capture local to the generated function instead of replacing
+	-- Studio's process-wide print function.
+	local baseEnvironment = getfenv(fn)
+	local executionEnvironment = setmetatable({
+		print = capturePrint,
+	}, {
+		__index = baseEnvironment,
+	})
+	setfenv(fn, executionEnvironment)
+
+	local success, result = pcall(fn)
 	if not success then
 		return { output = table.concat(output, "\n"), error = tostring(result) }
 	end
 	
 	if result ~= nil then
-		table.insert(output, tostring(result))
+		capturePrint(result)
 	end
 	
-	return { output = table.concat(output, "\n") }
+	return { output = table.concat(output, "\n"), truncated = outputTruncated }
+end
+
+local function getRelativeInventoryPath(root, instance)
+	local parts = {}
+	local current = instance
+	while current and current ~= root do
+		table.insert(parts, 1, current.Name)
+		current = current.Parent
+	end
+	table.insert(parts, 1, root.Name)
+	return table.concat(parts, "/")
+end
+
+local function quarantineImportedScripts(root)
+	local inventory = {}
+	local disabledCount = 0
+	local candidates = { root }
+	local descendants = root:GetDescendants()
+	if #descendants > MAX_IMPORTED_DESCENDANTS then
+		error(
+			"Imported asset contains "
+				.. #descendants
+				.. " descendants, exceeding the safety limit of "
+				.. MAX_IMPORTED_DESCENDANTS
+		)
+	end
+	for _, descendant in ipairs(descendants) do
+		table.insert(candidates, descendant)
+	end
+
+	for _, candidate in ipairs(candidates) do
+		if candidate:IsA("LuaSourceContainer") then
+			if #inventory >= MAX_IMPORTED_SCRIPT_INVENTORY then
+				error(
+					"Imported asset contains more than "
+						.. MAX_IMPORTED_SCRIPT_INVENTORY
+						.. " scripts and cannot be safely inventoried"
+				)
+			end
+			local entry = {
+				name = candidate.Name,
+				className = candidate.ClassName,
+				relativePath = getRelativeInventoryPath(root, candidate),
+				quarantined = false,
+			}
+			if candidate:IsA("BaseScript") then
+				entry.wasEnabled = candidate.Enabled
+				candidate.Enabled = false
+				if candidate.Enabled then
+					error("Failed to quarantine imported script " .. entry.relativePath)
+				end
+				entry.quarantined = true
+				disabledCount = disabledCount + 1
+			end
+			table.insert(inventory, entry)
+		end
+	end
+
+	return inventory, disabledCount
 end
 
 -- Asset insertion (from Creator Store)
 handlers["/asset/insert"] = function(data)
-	local parent = getInstanceFromPath(data.parent)
-	if not parent then
-		error("Parent not found: " .. data.parent)
-	end
+	local parent = requireInstanceFromPath(data.parent, "Parent")
 
 	local assetId = tonumber(data.assetId)
 	if not assetId then
@@ -993,12 +1197,33 @@ handlers["/asset/insert"] = function(data)
 		end
 	end
 
+	local quarantined, scriptInventory, disabledScriptCount = pcall(quarantineImportedScripts, actualModel)
+	if not quarantined then
+		model:Destroy()
+		error(scriptInventory)
+	end
+
+	local validName, nameError = validateAddressableName(actualModel.Name)
+	if not validName then
+		model:Destroy()
+		error(nameError)
+	end
+	local uniqueName, uniqueError = pcall(assertUniqueChildName, parent, actualModel.Name)
+	if not uniqueName then
+		model:Destroy()
+		error(uniqueError)
+	end
 	actualModel.Parent = parent
+	if model ~= actualModel then
+		model:Destroy()
+	end
 
 	return {
 		success = true,
 		path = getInstancePath(actualModel),
 		name = actualModel.Name,
+		scripts = scriptInventory,
+		scriptsQuarantined = disabledScriptCount,
 	}
 end
 
@@ -1044,7 +1269,14 @@ local actionNames = {
 local function handleRequest(request)
 	local path = request.path or request.Path
 	local body = request.body or request.Body
-	
+
+	if type(path) ~= "string" or path == "" then
+		return {
+			status = 400,
+			body = jsonEncode({ error = "Request path must be a non-empty string" })
+		}
+	end
+
 	local handler = handlers[path]
 	if not handler then
 		return {
@@ -1056,15 +1288,19 @@ local function handleRequest(request)
 	local data = {}
 	if body and body ~= "" then
 		local success, parsed = pcall(jsonDecode, body)
-		if success then
-			data = parsed
+		if not success or type(parsed) ~= "table" then
+			return {
+				status = 400,
+				body = jsonEncode({ error = "Request body must be valid JSON" })
+			}
 		end
+		data = parsed
 	end
 	
 	-- Create undo waypoint for modifying operations
 	local isModifying = modifyingPaths[path]
 	if isModifying then
-		ChangeHistoryService:SetWaypoint("Stud: " .. path)
+		ChangeHistoryService:SetWaypoint("Bubberton9001: " .. path)
 	end
 	
 	-- Set processing state
@@ -1093,7 +1329,7 @@ local function handleRequest(request)
 	
 	-- Commit the change so it can be undone
 	if isModifying then
-		ChangeHistoryService:SetWaypoint("Stud: " .. path .. " (done)")
+		ChangeHistoryService:SetWaypoint("Bubberton9001: " .. path .. " (done)")
 	end
 	
 	return {
@@ -1102,32 +1338,137 @@ local function handleRequest(request)
 	}
 end
 
+local function rememberCompletedRequest(requestId, result)
+	if completedRequests[requestId] == nil then
+		table.insert(completedRequestOrder, requestId)
+	end
+	completedRequests[requestId] = result
+
+	while #completedRequestOrder > MAX_COMPLETED_REQUESTS do
+		local oldestId = table.remove(completedRequestOrder, 1)
+		completedRequests[oldestId] = nil
+	end
+end
+
+local function sendResponse(requestId, result)
+	local encodedBody = jsonEncode({
+		id = requestId,
+		session_id = SESSION_ID,
+		response = result,
+	})
+
+	for attempt = 1, 3 do
+		local success, response = pcall(function()
+			return HttpService:RequestAsync({
+				Url = RESPOND_URL,
+				Method = "POST",
+				Headers = {
+					["Content-Type"] = "application/json",
+					["X-Bubberton9001-Secret"] = PAIRING_SECRET,
+				},
+				Body = encodedBody,
+			})
+		end)
+
+		if success and response.Success then
+			return true
+		end
+
+		if attempt < 3 then
+			task.wait(0.15 * attempt)
+		end
+	end
+
+	return false
+end
+
+local function releaseSession()
+	pcall(function()
+		HttpService:RequestAsync({
+			Url = DISCONNECT_URL,
+			Method = "POST",
+			Headers = {
+				["Content-Type"] = "application/json",
+				["X-Bubberton9001-Secret"] = PAIRING_SECRET,
+			},
+			Body = jsonEncode({ session_id = SESSION_ID }),
+		})
+	end)
+end
+
 -- Polling loop
 local function pollServer()
 	local failCount = 0
 	local maxFails = 3
 	
-	while pollingEnabled do
-		local success, response = pcall(function()
-			return HttpService:RequestAsync({
-				Url = POLL_URL,
-				Method = "GET",
-			})
-		end)
-		
-		if success and response.Success then
-			-- Connected!
+		while pollingEnabled do
+			local success, response = pcall(function()
+				return HttpService:RequestAsync({
+					Url = POLL_SESSION_URL,
+					Method = "GET",
+					Headers = { ["X-Bubberton9001-Secret"] = PAIRING_SECRET },
+				})
+			end)
+			
+			if success and response.StatusCode == 401 then
+				local decoded, data = pcall(jsonDecode, response.Body)
+				if decoded and type(data) == "table" and data.pairing_error then
+					if not hasPairingError then
+						addActivity("Plugin pairing failed", "error")
+						warn("[bubberton9001-bridge] " .. (data.message or "Reinstall the Studio plugin"))
+					end
+					hasPairingError = true
+					hasSessionConflict = false
+					isConnected = false
+					isConnecting = false
+					projectInfo = nil
+					updateUI()
+					task.wait(0.5)
+					continue
+				end
+			end
+
+			if success and response.Success then
+				local decoded, data = pcall(jsonDecode, response.Body)
+			if not decoded or type(data) ~= "table" then
+				failCount = failCount + 1
+				warn("[bubberton9001-bridge] Ignoring an invalid bridge response")
+				task.wait(0.25)
+					continue
+				end
+
+				hasPairingError = false
+
+			if data.session_conflict then
+				if not hasSessionConflict then
+					addActivity("Another Studio is connected", "pending")
+					warn("[bubberton9001-bridge] " .. (data.message or "Another Studio session is active"))
+				end
+				hasSessionConflict = true
+				isConnected = false
+				isConnecting = false
+				projectInfo = nil
+				failCount = 0
+				updateUI()
+				task.wait(0.25)
+				continue
+			end
+
+			if hasSessionConflict then
+				hasSessionConflict = false
+				addActivity("Studio session available", "success")
+			end
+
+			-- Connected as the active Studio session.
 			if not isConnected then
 				isConnected = true
 				isConnecting = false
 				failCount = 0
 				updateUI()
 				addActivity("Connected", "success")
-				print("[stud-bridge] Connected to Stud Desktop")
+				print("[bubberton9001-bridge] Connected to Bubberton9001 Desktop")
 			end
-			
-			local data = jsonDecode(response.Body)
-			
+
 			-- Extract project info if available
 			if data and data.project then
 				projectInfo = data.project
@@ -1135,18 +1476,33 @@ local function pollServer()
 			end
 			
 			if data and data.request then
-				local result = handleRequest(data.request)
-				pcall(function()
-					HttpService:RequestAsync({
-						Url = RESPOND_URL,
-						Method = "POST",
-						Headers = { ["Content-Type"] = "application/json" },
-						Body = jsonEncode({
-							id = data.id,
-							response = result,
-						}),
-					})
-				end)
+				local requestId = data.id
+				if type(requestId) ~= "string" or requestId == "" then
+					warn("[bubberton9001-bridge] Ignoring a request without a valid ID")
+				elseif inFlightRequestIds[requestId] then
+					warn("[bubberton9001-bridge] Ignoring duplicate in-flight request " .. requestId)
+				else
+					local result = completedRequests[requestId]
+					if result == nil then
+						inFlightRequestIds[requestId] = true
+						local handled, executionResult = pcall(handleRequest, data.request)
+						inFlightRequestIds[requestId] = nil
+
+						if handled then
+							result = executionResult
+						else
+							result = {
+								status = 500,
+								body = jsonEncode({ error = tostring(executionResult) }),
+							}
+						end
+						rememberCompletedRequest(requestId, result)
+					end
+
+					if not sendResponse(requestId, result) then
+						warn("[bubberton9001-bridge] Could not deliver response for " .. requestId)
+					end
+				end
 			end
 			failCount = 0
 		else
@@ -1154,10 +1510,11 @@ local function pollServer()
 			if isConnected and failCount >= maxFails then
 				isConnected = false
 				isConnecting = true
+				hasSessionConflict = false
 				projectInfo = nil
 				updateUI()
 				addActivity("Connection lost", "error")
-				print("[stud-bridge] Connection lost, retrying...")
+				print("[bubberton9001-bridge] Connection lost, retrying...")
 			end
 		end
 		
@@ -1165,9 +1522,11 @@ local function pollServer()
 	end
 	
 	-- Stopped polling
-	isConnected = false
-	isConnecting = false
-	projectInfo = nil
+		isConnected = false
+		isConnecting = false
+		hasSessionConflict = false
+		hasPairingError = false
+		projectInfo = nil
 	updateUI()
 end
 
@@ -1177,17 +1536,22 @@ function toggleConnection()
 	
 	if pollingEnabled then
 		isConnecting = true
+		hasSessionConflict = false
+		hasPairingError = false
 		updateUI()
 		addActivity("Connecting", "pending")
-		print("[stud-bridge] Connecting...")
+		print("[bubberton9001-bridge] Connecting...")
 		task.spawn(pollServer)
 	else
+		releaseSession()
 		isConnected = false
 		isConnecting = false
+		hasSessionConflict = false
+		hasPairingError = false
 		projectInfo = nil
 		updateUI()
 		addActivity("Disconnected", "success")
-		print("[stud-bridge] Disconnected")
+		print("[bubberton9001-bridge] Disconnected")
 	end
 end
 
@@ -1202,4 +1566,9 @@ toggleButton.Click:Connect(function()
 	widget.Enabled = true
 end)
 
-print("[stud-bridge] Plugin loaded - Click Connect to start")
+plugin.Unloading:Connect(function()
+	pollingEnabled = false
+	releaseSession()
+end)
+
+print("[bubberton9001-bridge] Plugin loaded - Click Connect to start")

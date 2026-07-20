@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Stud",
+  "productName": "Bubberton9001",
   "version": "0.1.0",
   "identifier": "com.shauryagupta.stud",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "Stud",
+        "title": "Bubberton9001",
         "label": "main",
         "width": 1100,
         "height": 750,
@@ -27,7 +27,7 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' ipc: http://ipc.localhost; connect-src 'self' ipc: http://ipc.localhost http://localhost:3001 http://127.0.0.1:3001 http://localhost:1455 http://127.0.0.1:1455 ws://localhost:1430 https://api.openai.com https://api.anthropic.com https://chatgpt.com https://auth.openai.com https://models.dev https://apis.roblox.com https://thumbnails.roblox.com; img-src 'self' data: blob: asset: http://asset.localhost https://*.rbxcdn.com https://rbxcdn.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; script-src 'self'"
     }
   },
   "bundle": {

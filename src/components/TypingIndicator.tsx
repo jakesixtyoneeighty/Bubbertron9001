@@ -3,6 +3,7 @@
  */
 
 import { cn } from "@/lib/utils";
+import { BRAND } from "@/config/brand";
 import { BotAvatar } from "@/components/icons/Avatars";
 
 interface TypingIndicatorProps {
@@ -61,7 +62,9 @@ function WaveAnimation() {
 function TextAnimation() {
   return (
     <span className="text-sm text-muted-foreground">
-      <span className="animate-pulse"><span className="font-logo">Stud</span> is thinking</span>
+      <span className="animate-pulse">
+        <span className="font-logo">{BRAND.shortName}</span> is thinking
+      </span>
       <span className="inline-flex">
         {[0, 1, 2].map((i) => (
           <span

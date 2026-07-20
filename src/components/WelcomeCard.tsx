@@ -4,6 +4,7 @@
 
 import { useState, useEffect } from "react";
 import { cn } from "@/lib/utils";
+import { BRAND } from "@/config/brand";
 import { LogoMark } from "@/components/icons/Logo";
 import {
   Code,
@@ -79,9 +80,11 @@ export function WelcomeCard({ className, compact = false }: WelcomeCardProps) {
           <LogoMark className="w-8 h-8" />
         </div>
         <div>
-          <h2 className="text-lg font-heading">Welcome to <span className="font-logo">Stud</span></h2>
+          <h2 className="text-lg font-heading">
+            Welcome to <span className="font-logo">{BRAND.name}</span>
+          </h2>
           <p className="text-sm text-muted-foreground">
-            Your AI assistant for Roblox Studio
+            Your skills-powered AI agent for Roblox Studio
           </p>
         </div>
       </div>

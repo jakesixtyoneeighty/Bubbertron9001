@@ -1,34 +1,20 @@
 import { cn } from "@/lib/utils";
+import { BRAND } from "@/config/brand";
+import { LogoMark } from "@/components/icons/Logo";
 
 interface AvatarIconProps {
   className?: string;
 }
 
-// Bot avatar - Stud logo mark styled for chat
+// Bot avatar - B9 logo mark styled for chat
 export function BotAvatar({ className }: AvatarIconProps) {
   return (
     <div className={cn(
       "flex items-center justify-center rounded-lg bg-primary text-primary-foreground",
       "w-8 h-8",
       className
-    )}>
-      <svg
-        viewBox="0 0 48 48"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        className="w-5 h-5"
-      >
-        {/* Stud logo mark - tilted square */}
-        <path
-          d="M41.26 12.67L14.71 5.56a1.67 1.67 0 0 0-2.04 1.18L5.56 33.29a1.67 1.67 0 0 0 1.18 2.04l26.55 7.11a1.67 1.67 0 0 0 2.04-1.18l7.11-26.55a1.67 1.67 0 0 0-1.18-2.04Z"
-          fill="currentColor"
-        />
-        {/* Inner square hole */}
-        <path
-          d="M29.32 20.51l-8.18-2.19a.51.51 0 0 0-.63.36l-2.19 8.18a.51.51 0 0 0 .36.63l8.18 2.19a.51.51 0 0 0 .63-.36l2.19-8.18a.51.51 0 0 0-.36-.63Z"
-          fill="rgba(0,0,0,0.3)"
-        />
-      </svg>
+    )} role="img" aria-label={`${BRAND.shortName} assistant`}>
+      <LogoMark className="w-5 h-5" />
     </div>
   );
 }

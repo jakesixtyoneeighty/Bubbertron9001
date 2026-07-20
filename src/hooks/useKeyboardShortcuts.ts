@@ -1,5 +1,5 @@
 /**
- * useKeyboardShortcuts - Global keyboard shortcuts for Stud
+ * useKeyboardShortcuts - Global keyboard shortcuts for Bubberton9001
  */
 
 import { useEffect } from "react";

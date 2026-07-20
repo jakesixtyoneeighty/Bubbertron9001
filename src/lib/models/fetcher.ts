@@ -3,14 +3,16 @@
  * Fetches from models.dev (same source as opencode fork)
  */
 
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { BRAND, LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/config/brand";
+import { appFetch } from "@/lib/http";
+import { migrateStorageKey } from "@/lib/storage";
 import type { ProvidersData, DisplayModel, Model } from "./types";
 import { FALLBACK_CODEX_MODELS, CODEX_ALLOWED_MODELS } from "./types";
 
 export { FALLBACK_CODEX_MODELS };
 
 const MODELS_URL = "https://models.dev/api.json";
-const CACHE_KEY = "stud_models_cache";
+const CACHE_KEY = STORAGE_KEYS.models;
 const CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 interface ModelsCache {
@@ -20,6 +22,8 @@ interface ModelsCache {
 }
 
 const CACHE_VERSION = 1;
+
+migrateStorageKey(LEGACY_STORAGE_KEYS.models, STORAGE_KEYS.models);
 
 /**
  * Get cached models from localStorage
@@ -75,10 +79,10 @@ export function clearModelsCache(): void {
  * Uses Tauri HTTP plugin to bypass CORS
  */
 export async function fetchAllModels(): Promise<ProvidersData> {
-  const response = await tauriFetch(MODELS_URL, {
+  const response = await appFetch(MODELS_URL, {
     method: "GET",
     headers: {
-      "User-Agent": "Stud/1.0",
+      "User-Agent": `${BRAND.name}/1.0`,
     },
   });
 

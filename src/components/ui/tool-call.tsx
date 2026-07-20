@@ -14,8 +14,18 @@ export interface ToolCallProps {
 
 // Pretty print tool name (e.g., roblox_get_script -> Get Script)
 function formatToolName(name: string): string {
+  const labels: Record<string, string> = {
+    agent_create_plan: "Create Plan",
+    agent_update_plan: "Update Plan",
+    agent_finish_plan: "Verify & Finish",
+    skill_search: "Find Roblox Skills",
+    skill_load: "Load Roblox Skill",
+    web_search: "Search the Web",
+  };
+  if (labels[name]) return labels[name];
+
   return name
-    .replace(/^roblox_/, "")
+    .replace(/^(roblox|agent|skill)_/, "")
     .split("_")
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(" ");

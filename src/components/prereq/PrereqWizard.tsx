@@ -11,6 +11,7 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { usePrereqStore, type PrereqCheck } from "@/stores/prereq";
 import { Loader } from "@/components/ui/loader";
 import { cn } from "@/lib/utils";
+import { BRAND } from "@/config/brand";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import {
   CheckCircle,
@@ -27,7 +28,7 @@ import {
 
 const iconMap: Record<string, React.ElementType> = {
   "roblox-studio": Monitor,
-  "stud-plugin": Plug,
+  "bubberton9001-plugin": Plug,
   "api-provider": Key,
   "bridge-server": Server,
   "studio-connection": Plug,
@@ -187,7 +188,7 @@ export function PrereqWizard() {
           <h1 className="text-3xl font-bold tracking-tight">Setup Required</h1>
           <p className="text-neutral-600 mt-2">
             {hasIssues
-              ? "Some prerequisites need your attention before using Stud."
+              ? `Some prerequisites need your attention before using ${BRAND.name}.`
               : "Almost ready! Just a few optional items to review."}
           </p>
         </div>
@@ -248,7 +249,7 @@ export function PrereqWizard() {
               onClick={dismissWizard}
               className="px-6 py-2 text-sm font-medium bg-black text-white rounded-md hover:bg-neutral-800 transition-colors"
             >
-              Continue to Stud
+              Continue to {BRAND.name}
             </button>
           )}
 

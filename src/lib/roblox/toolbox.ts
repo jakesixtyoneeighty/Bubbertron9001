@@ -1,21 +1,39 @@
 /**
- * Roblox Toolbox API Client
+ * Roblox Creator Store API client.
  *
- * Uses Roblox APIs to search and retrieve free models from Creator Store
+ * Search and detail responses are treated as untrusted external data. Only
+ * explicitly free, purchasable assets of the requested Creator Store type are
+ * returned to the agent.
  */
 
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { z } from "zod";
+import { appFetch } from "@/lib/http";
+
+export type AssetCategory =
+  | "Model"
+  | "Decal"
+  | "Audio"
+  | "Plugin"
+  | "MeshPart";
 
 export interface ToolboxAsset {
   id: number;
   name: string;
   description: string;
+  category: AssetCategory;
+  assetTypeId: number;
   creatorName: string;
   creatorId: number;
   thumbnailUrl?: string;
-  favoriteCount: number;
   created: string;
   updated: string;
+  voteCount?: number;
+  upVotePercent?: number;
+  hasScripts: boolean;
+  scriptCount: number;
+  shouldSandbox: boolean;
+  purchasable: true;
+  isFree: true;
 }
 
 export interface ToolboxSearchResult {
@@ -23,12 +41,12 @@ export interface ToolboxSearchResult {
   nextPageCursor?: string;
 }
 
-// Use the details endpoint which returns full asset info
-const CATALOG_SEARCH_API = "https://catalog.roblox.com/v1/search/items";
-const CATALOG_DETAILS_API = "https://catalog.roblox.com/v1/search/items/details";
+const CREATOR_STORE_SEARCH_API =
+  "https://apis.roblox.com/toolbox-service/v2/assets:search";
+const CREATOR_STORE_ASSET_API =
+  "https://apis.roblox.com/toolbox-service/v2/assets";
 const THUMBNAILS_API = "https://thumbnails.roblox.com/v1/assets";
-
-export type AssetCategory = "Model" | "Decal" | "Audio" | "Plugin" | "MeshPart";
+const MAX_SEARCH_LIMIT = 50;
 
 const CATEGORY_TO_TYPE: Record<AssetCategory, number> = {
   Model: 10,
@@ -38,155 +56,154 @@ const CATEGORY_TO_TYPE: Record<AssetCategory, number> = {
   MeshPart: 40,
 };
 
-export async function searchToolbox(
-  query: string,
-  category: AssetCategory = "Model",
-  limit = 10
-): Promise<ToolboxSearchResult> {
-  const assetType = CATEGORY_TO_TYPE[category];
+const TYPE_TO_CATEGORY = Object.fromEntries(
+  Object.entries(CATEGORY_TO_TYPE).map(([category, assetTypeId]) => [
+    assetTypeId,
+    category,
+  ])
+) as Record<number, AssetCategory>;
 
-  // Use the details endpoint which returns name, creator, etc.
-  const params = new URLSearchParams({
-    Category: "1", // Marketplace category
-    Keyword: query,
-    AssetType: assetType.toString(),
-    Limit: limit.toString(),
-    SortType: "0", // Relevance
-    SortAggregation: "3",
-    SortOrder: "2", // Descending
-    IncludeNotForSale: "false",
-  });
+const priceQuantitySchema = z.object({
+  significand: z.union([z.number(), z.string()]),
+  exponent: z.number().int(),
+});
 
-  console.log("[Toolbox] Searching:", query, "category:", category);
+const creatorStoreAssetSchema = z.object({
+  voting: z
+    .object({
+      voteCount: z.number().int().nonnegative().optional(),
+      upVotePercent: z.number().min(0).max(100).optional(),
+    })
+    .optional(),
+  creator: z.object({
+    creator: z.string().optional(),
+    userId: z.number().int().nonnegative().optional(),
+    groupId: z.number().int().nonnegative().optional(),
+    name: z.string().min(1),
+  }),
+  creatorStoreProduct: z.object({
+    purchasable: z.boolean(),
+    purchasePrice: z.object({
+      currencyCode: z.string().min(1),
+      quantity: priceQuantitySchema,
+    }),
+  }),
+  asset: z.object({
+    id: z.number().int().positive(),
+    name: z.string().min(1),
+    description: z.string().nullish(),
+    assetTypeId: z.number().int().positive(),
+    createTime: z.string().optional(),
+    updateTime: z.string().optional(),
+    hasScripts: z.boolean().optional(),
+    scriptCount: z.number().int().nonnegative().optional(),
+    instanceCounts: z
+      .object({
+        script: z.number().int().nonnegative().optional(),
+      })
+      .optional(),
+    capabilities: z
+      .object({
+        shouldSandbox: z.boolean().optional(),
+      })
+      .optional(),
+  }),
+});
 
-  const response = await tauriFetch(`${CATALOG_DETAILS_API}?${params}`, {
-    method: "GET",
-    headers: {
-      "User-Agent": "Stud/1.0",
-      "Accept": "application/json",
-    },
-  });
+const creatorStoreSearchSchema = z.object({
+  creatorStoreAssets: z.array(z.unknown()),
+  nextPageToken: z.string().optional(),
+});
 
-  if (!response.ok) {
-    console.error("[Toolbox] Search failed:", response.status);
-    // Fallback to alternate search
-    return searchToolboxFallback(query, category, limit);
+const thumbnailResponseSchema = z.object({
+  data: z.array(
+    z.object({
+      targetId: z.number().int().positive(),
+      imageUrl: z.string().min(1),
+      state: z.string(),
+    })
+  ),
+});
+
+function requestedLimit(limit: number): number {
+  if (!Number.isFinite(limit)) return 10;
+  return Math.min(MAX_SEARCH_LIMIT, Math.max(1, Math.trunc(limit)));
+}
+
+function isExplicitlyFree(
+  quantity: z.infer<typeof priceQuantitySchema>
+): boolean {
+  const significand =
+    typeof quantity.significand === "number"
+      ? quantity.significand
+      : Number(quantity.significand);
+  return Number.isFinite(significand) && significand === 0;
+}
+
+function creatorId(
+  creator: z.infer<typeof creatorStoreAssetSchema>["creator"]
+): number {
+  if (creator.userId !== undefined) return creator.userId;
+  if (creator.groupId !== undefined) return creator.groupId;
+
+  const creatorPath = creator.creator?.split("/") ?? [];
+  const pathId = Number(creatorPath[creatorPath.length - 1]);
+  return Number.isSafeInteger(pathId) && pathId >= 0 ? pathId : 0;
+}
+
+function parseCreatorStoreAsset(
+  value: unknown,
+  expectedAssetTypeId?: number
+): ToolboxAsset | null {
+  const parsed = creatorStoreAssetSchema.safeParse(value);
+  if (!parsed.success) return null;
+
+  const { asset, creator, creatorStoreProduct, voting } = parsed.data;
+  if (
+    expectedAssetTypeId !== undefined &&
+    asset.assetTypeId !== expectedAssetTypeId
+  ) {
+    return null;
   }
 
-  const rawData = await response.json();
-  console.log("[Toolbox] Raw response:", JSON.stringify(rawData, null, 2).slice(0, 2000));
-
-  // Parse the response - details endpoint returns more info
-  const data = rawData as {
-    data?: Array<{
-      id: number;
-      itemType?: string;
-      assetType?: number;
-      name?: string;
-      description?: string;
-      creatorName?: string;
-      creatorType?: string;
-      creatorTargetId?: number;
-      price?: number;
-      favoriteCount?: number;
-    }>;
-    nextPageCursor?: string;
-  };
-
-  if (!data.data || !Array.isArray(data.data)) {
-    console.error("[Toolbox] Unexpected response format, trying fallback");
-    return searchToolboxFallback(query, category, limit);
+  const category = TYPE_TO_CATEGORY[asset.assetTypeId];
+  if (
+    !category ||
+    creatorStoreProduct.purchasable !== true ||
+    !isExplicitlyFree(creatorStoreProduct.purchasePrice.quantity)
+  ) {
+    return null;
   }
 
-  const assets: ToolboxAsset[] = data.data.map((item) => ({
-    id: item.id,
-    name: item.name ?? `Asset ${item.id}`,
-    description: item.description ?? "",
-    creatorName: item.creatorName ?? "Unknown",
-    creatorId: item.creatorTargetId ?? 0,
-    favoriteCount: item.favoriteCount ?? 0,
-    created: "",
-    updated: "",
-  }));
-
-  console.log("[Toolbox] Parsed assets:", assets.map(a => ({ id: a.id, name: a.name, creator: a.creatorName })));
-
-  // Fetch thumbnails for the assets
-  if (assets.length > 0) {
-    try {
-      const thumbnails = await fetchThumbnails(assets.map((a) => a.id));
-      assets.forEach((asset) => {
-        asset.thumbnailUrl = thumbnails[asset.id];
-      });
-    } catch (err) {
-      console.error("[Toolbox] Thumbnail fetch error:", err);
-    }
-  }
+  const scriptCount =
+    asset.scriptCount ?? asset.instanceCounts?.script ?? 0;
+  const hasScripts = asset.hasScripts === true || scriptCount > 0;
 
   return {
-    assets,
-    nextPageCursor: data.nextPageCursor,
+    id: asset.id,
+    name: asset.name,
+    description: asset.description ?? "",
+    category,
+    assetTypeId: asset.assetTypeId,
+    creatorName: creator.name,
+    creatorId: creatorId(creator),
+    created: asset.createTime ?? "",
+    updated: asset.updateTime ?? "",
+    voteCount: voting?.voteCount,
+    upVotePercent: voting?.upVotePercent,
+    hasScripts,
+    scriptCount,
+    shouldSandbox: asset.capabilities?.shouldSandbox === true,
+    purchasable: true,
+    isFree: true,
   };
 }
 
-// Fallback: Search for IDs first, then fetch details individually
-async function searchToolboxFallback(
-  query: string,
-  category: AssetCategory = "Model",
-  limit = 10
-): Promise<ToolboxSearchResult> {
-  const assetType = CATEGORY_TO_TYPE[category];
+async function fetchThumbnails(
+  assetIds: number[]
+): Promise<Record<number, string>> {
+  if (assetIds.length === 0) return {};
 
-  const params = new URLSearchParams({
-    keyword: query,
-    assetType: assetType.toString(),
-    limit: limit.toString(),
-    sortType: "Relevance",
-    sortOrder: "Desc",
-  });
-
-  console.log("[Toolbox] Using fallback search...");
-
-  const response = await tauriFetch(`${CATALOG_SEARCH_API}?${params}`, {
-    method: "GET",
-    headers: {
-      "User-Agent": "Stud/1.0",
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Toolbox search failed: ${response.status}`);
-  }
-
-  const rawData = await response.json();
-  const data = rawData as {
-    data?: Array<{ id: number }>;
-    nextPageCursor?: string;
-  };
-
-  if (!data.data || !Array.isArray(data.data)) {
-    return { assets: [] };
-  }
-
-  // Fetch details for each asset
-  const assetIds = data.data.map(item => item.id);
-  const assets: ToolboxAsset[] = [];
-
-  // Batch fetch details using economy API
-  for (const id of assetIds.slice(0, limit)) {
-    const details = await getAssetDetails(id);
-    if (details) {
-      assets.push(details);
-    }
-  }
-
-  return {
-    assets,
-    nextPageCursor: data.nextPageCursor,
-  };
-}
-
-async function fetchThumbnails(assetIds: number[]): Promise<Record<number, string>> {
   const params = new URLSearchParams({
     assetIds: assetIds.join(","),
     size: "150x150",
@@ -194,71 +211,102 @@ async function fetchThumbnails(assetIds: number[]): Promise<Record<number, strin
     isCircular: "false",
   });
 
-  const response = await tauriFetch(`${THUMBNAILS_API}?${params}`, {
+  const response = await appFetch(`${THUMBNAILS_API}?${params}`, {
     method: "GET",
-    headers: {
-      "User-Agent": "Stud/1.0",
-    },
+    headers: { Accept: "application/json" },
   });
+  if (!response.ok) return {};
 
-  if (!response.ok) {
-    return {};
-  }
+  const parsed = thumbnailResponseSchema.safeParse(await response.json());
+  if (!parsed.success) return {};
 
-  const data = await response.json() as {
-    data: Array<{
-      targetId: number;
-      imageUrl: string;
-      state: string;
-    }>;
-  };
-
-  const result: Record<number, string> = {};
-  data.data.forEach((item) => {
-    if (item.state === "Completed" && item.imageUrl) {
-      result[item.targetId] = item.imageUrl;
-    }
-  });
-
-  return result;
+  return Object.fromEntries(
+    parsed.data.data
+      .filter(
+        (thumbnail) =>
+          thumbnail.state === "Completed" && thumbnail.imageUrl.length > 0
+      )
+      .map((thumbnail) => [thumbnail.targetId, thumbnail.imageUrl])
+  );
 }
 
-export async function getAssetDetails(assetId: number): Promise<ToolboxAsset | null> {
-  const response = await tauriFetch(
-    `https://economy.roblox.com/v2/assets/${assetId}/details`,
-    {
-      method: "GET",
-      headers: {
-        "User-Agent": "Stud/1.0",
-      },
-    }
-  );
+async function attachThumbnails(
+  assets: ToolboxAsset[]
+): Promise<ToolboxAsset[]> {
+  try {
+    const thumbnails = await fetchThumbnails(assets.map((asset) => asset.id));
+    return assets.map((asset) => ({
+      ...asset,
+      thumbnailUrl: thumbnails[asset.id],
+    }));
+  } catch {
+    // Thumbnails are optional presentation data; valid search results remain
+    // useful if Roblox's thumbnail service is temporarily unavailable.
+    return assets;
+  }
+}
 
-  if (!response.ok) {
-    return null;
+export async function searchToolbox(
+  query: string,
+  category: AssetCategory = "Model",
+  limit = 10
+): Promise<ToolboxSearchResult> {
+  const normalizedQuery = query.trim();
+  if (!normalizedQuery) {
+    throw new Error("Creator Store search query cannot be empty");
   }
 
-  const data = await response.json() as {
-    AssetId: number;
-    Name: string;
-    Description: string;
-    Creator: { Name: string; Id: number };
-    Created: string;
-    Updated: string;
-    FavoriteCount: number;
-  };
+  const maxPageSize = requestedLimit(limit);
+  const expectedAssetTypeId = CATEGORY_TO_TYPE[category];
+  const params = new URLSearchParams({
+    searchCategoryType: category,
+    query: normalizedQuery,
+    maxPageSize: maxPageSize.toString(),
+  });
 
-  const thumbnails = await fetchThumbnails([assetId]);
+  const response = await appFetch(`${CREATOR_STORE_SEARCH_API}?${params}`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) {
+    throw new Error(`Creator Store search failed: ${response.status}`);
+  }
+
+  const parsed = creatorStoreSearchSchema.safeParse(await response.json());
+  if (!parsed.success) {
+    throw new Error("Creator Store returned an invalid search response");
+  }
+
+  const validatedAssets = parsed.data.creatorStoreAssets
+    .map((asset) => parseCreatorStoreAsset(asset, expectedAssetTypeId))
+    .filter((asset): asset is ToolboxAsset => asset !== null)
+    .slice(0, maxPageSize);
+  const assets = await attachThumbnails(validatedAssets);
 
   return {
-    id: data.AssetId,
-    name: data.Name,
-    description: data.Description || "",
-    creatorName: data.Creator.Name,
-    creatorId: data.Creator.Id,
-    favoriteCount: data.FavoriteCount || 0,
-    created: data.Created,
-    updated: data.Updated,
-    thumbnailUrl: thumbnails[assetId],
+    assets,
+    nextPageCursor: parsed.data.nextPageToken,
   };
+}
+
+export async function getAssetDetails(
+  assetId: number,
+  expectedCategory?: AssetCategory
+): Promise<ToolboxAsset | null> {
+  if (!Number.isSafeInteger(assetId) || assetId <= 0) return null;
+
+  const response = await appFetch(`${CREATOR_STORE_ASSET_API}/${assetId}`, {
+    method: "GET",
+    headers: { Accept: "application/json" },
+  });
+  if (!response.ok) return null;
+
+  const asset = parseCreatorStoreAsset(
+    await response.json(),
+    expectedCategory ? CATEGORY_TO_TYPE[expectedCategory] : undefined
+  );
+  if (!asset) return null;
+
+  const [withThumbnail] = await attachThumbnails([asset]);
+  return withThumbnail ?? asset;
 }
