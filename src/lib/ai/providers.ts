@@ -57,6 +57,7 @@ export interface ChatRunOptions {
 }
 
 export interface ChatOptions extends ChatCallbacks, ChatRunOptions {
+  runId: string;
   model: string;
   provider: ProviderType;
   apiKey: string;
@@ -71,6 +72,7 @@ interface StandardStepPolicyInput {
   planningRequired: boolean;
   forceWebSearch: boolean;
   toolNames: string[];
+  runId?: string;
 }
 
 function toolWasCalled(
@@ -87,8 +89,9 @@ export function getStandardStepPolicy({
   planningRequired,
   forceWebSearch,
   toolNames,
+  runId,
 }: StandardStepPolicyInput) {
-  if (planningRequired && !hasActivePlan()) {
+  if (planningRequired && !hasActivePlan(runId)) {
     return {
       activeTools: ["agent_create_plan"],
       toolChoice: {
@@ -108,7 +111,7 @@ export function getStandardStepPolicy({
     };
   }
 
-  if (isPlanReadyToFinish()) {
+  if (isPlanReadyToFinish(runId)) {
     return {
       activeTools: ["agent_finish_plan"],
       toolChoice: {
@@ -122,7 +125,7 @@ export function getStandardStepPolicy({
     (toolName) => toolName !== "agent_finish_plan"
   );
 
-  if (hasRunningPlan()) {
+  if (hasRunningPlan(runId)) {
     return {
       activeTools: workingTools,
       toolChoice: "required" as const,
@@ -165,9 +168,10 @@ export function useChat() {
       ? shouldCreatePlan(currentMessage, options.forcePlan)
       : options.forcePlan === true;
 
-    beginAgentRun(currentMessage, planningRequired);
+    const runId = beginAgentRun(currentMessage, planningRequired);
 
     return chat({
+      runId,
       model,
       provider,
       apiKey,

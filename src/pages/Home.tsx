@@ -25,7 +25,8 @@ import { QuestionPrompt } from "@/components/chat/QuestionPrompt";
 import { InstancePicker } from "@/components/chat/InstancePicker";
 import { PlanView } from "@/components/chat/PlanView";
 import { SourceList } from "@/components/chat/SourceList";
-import { PlaytestFix } from "@/components/chat/PlaytestFix";
+import { PlaytestFix, PLAYTEST_FIX_PROMPT } from "@/components/chat/PlaytestFix";
+import { OneClickGamesButton } from "@/components/games/OneClickGamesButton";
 import { ChatActions } from "@/components/QuickActions";
 import { CommandPalette } from "@/components/CommandPalette";
 import { EmptyState } from "@/components/EmptyState";
@@ -763,11 +764,11 @@ export function Home() {
                 <LogoMark className="w-24 h-24 glow-lime" />
               </div>
               <h1 className="text-4xl font-heading text-gradient-hero">
-                What would you like to build?
+                Let's build some cool shit!
               </h1>
               <p className="text-muted-foreground max-w-md mx-auto">
-                Your Roblox co-builder is standing by. Drop a mission below —
-                scripts, systems, GUIs, the whole world.
+                Meet B9 your Roblox master builder. He's a beast. Drop your ideas below —
+                scripts, systems, GUIs, the whole world. If it can built, B9 can build it.
               </p>
             </div>
 
@@ -876,7 +877,12 @@ export function Home() {
               ))}
             </div>
 
-            <div className="flex justify-center animate-slide-up stagger-4">
+            <div className="flex flex-wrap justify-center gap-2 animate-slide-up stagger-4">
+              <OneClickGamesButton
+                studioConnected={isConnected}
+                disabled={isStreaming}
+                onPlaytestFix={() => void handleSubmit(PLAYTEST_FIX_PROMPT)}
+              />
               <PlaytestFix
                 onAnalyze={(prompt) => void handleSubmit(prompt)}
                 disabled={isStreaming || !hasConfiguredProvider}
@@ -922,6 +928,12 @@ export function Home() {
           <StatusBadge status={studioStatus} />
           <div className="h-4 w-px bg-border mx-1" />
           <SoundToggle />
+          <OneClickGamesButton
+            compact
+            studioConnected={isConnected}
+            disabled={isStreaming}
+            onPlaytestFix={() => void handleSubmit(PLAYTEST_FIX_PROMPT)}
+          />
           <PlaytestFix
             compact
             onAnalyze={(prompt) => void handleSubmit(prompt)}

@@ -95,11 +95,11 @@ export function EmptyState({ className }: EmptyStateProps) {
       </div>
 
       <h1 className="text-3xl font-heading mb-2 text-gradient-hero">
-        What would you like to build?
-      </h1>
+        Let's build some cool shit!
+        </h1>
       <p className="text-muted-foreground mb-8 max-w-md">
         <span className="font-logo text-cream">{BRAND.name}</span> can help you create,
-        modify, and debug your Roblox game — like having a co-builder on standby.
+        modify, and debug your Roblox game — like having a master builder at your fingertips.
       </p>
 
       <div className="flex flex-wrap justify-center gap-3 mb-8">

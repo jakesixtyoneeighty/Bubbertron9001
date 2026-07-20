@@ -1,0 +1,121 @@
+{
+  "schemaVersion": "b9.game-template/v1",
+  "id": "obby-starter",
+  "version": "1.0.0",
+  "name": "Obby Starter",
+  "description": "An editable checkpoint obby built from primitive parts and two bundled, reviewed scripts.",
+  "compatibility": {
+    "changeSetVersion": "b9.changeset/v1",
+    "installerVersion": 1
+  },
+  "requiredSkills": [
+    "roblox-building",
+    "roblox-gui"
+  ],
+  "options": {
+    "stages": {
+      "type": "number_enum",
+      "label": "Stages",
+      "values": [5, 10, 15],
+      "default": 10
+    },
+    "difficulty": {
+      "type": "string_enum",
+      "label": "Difficulty",
+      "values": ["easy", "standard", "challenging"],
+      "default": "standard"
+    },
+    "visualStyle": {
+      "type": "string_enum",
+      "label": "Visual style",
+      "values": ["bright", "neon", "nature"],
+      "default": "bright"
+    }
+  },
+  "generator": {
+    "type": "linear_obby_v1",
+    "workspaceRoot": "game.Workspace.B9_Obby",
+    "serverScriptPath": "game.ServerScriptService.B9_ObbyServer",
+    "progressGuiRoot": "game.StarterGui.B9_ObbyProgress",
+    "difficultyPresets": {
+      "easy": {
+        "stageSpacing": 18,
+        "obstacleWidth": 12,
+        "obstacleDepth": 10,
+        "heightStep": 0.25
+      },
+      "standard": {
+        "stageSpacing": 22,
+        "obstacleWidth": 9,
+        "obstacleDepth": 8,
+        "heightStep": 0.5
+      },
+      "challenging": {
+        "stageSpacing": 26,
+        "obstacleWidth": 6,
+        "obstacleDepth": 6,
+        "heightStep": 0.75
+      }
+    },
+    "styles": {
+      "bright": {
+        "material": { "type": "Enum", "value": "Enum.Material.SmoothPlastic" },
+        "stageColors": [
+          { "type": "Color3", "r": 1, "g": 0.35, "b": 0.2 },
+          { "type": "Color3", "r": 1, "g": 0.8, "b": 0.15 },
+          { "type": "Color3", "r": 0.2, "g": 0.8, "b": 1 }
+        ],
+        "checkpointColor": { "type": "Color3", "r": 0.2, "g": 1, "b": 0.45 },
+        "finishColor": { "type": "Color3", "r": 1, "g": 0.85, "b": 0.1 },
+        "killFloorColor": { "type": "Color3", "r": 0.9, "g": 0.1, "b": 0.1 }
+      },
+      "neon": {
+        "material": { "type": "Enum", "value": "Enum.Material.Neon" },
+        "stageColors": [
+          { "type": "Color3", "r": 1, "g": 0.05, "b": 0.75 },
+          { "type": "Color3", "r": 0.05, "g": 0.9, "b": 1 },
+          { "type": "Color3", "r": 0.65, "g": 0.1, "b": 1 }
+        ],
+        "checkpointColor": { "type": "Color3", "r": 0.1, "g": 1, "b": 0.55 },
+        "finishColor": { "type": "Color3", "r": 1, "g": 1, "b": 0.1 },
+        "killFloorColor": { "type": "Color3", "r": 1, "g": 0, "b": 0.3 }
+      },
+      "nature": {
+        "material": { "type": "Enum", "value": "Enum.Material.Grass" },
+        "stageColors": [
+          { "type": "Color3", "r": 0.25, "g": 0.65, "b": 0.2 },
+          { "type": "Color3", "r": 0.45, "g": 0.3, "b": 0.15 },
+          { "type": "Color3", "r": 0.15, "g": 0.5, "b": 0.25 }
+        ],
+        "checkpointColor": { "type": "Color3", "r": 0.65, "g": 0.85, "b": 0.25 },
+        "finishColor": { "type": "Color3", "r": 1, "g": 0.75, "b": 0.2 },
+        "killFloorColor": { "type": "Color3", "r": 0.3, "g": 0.12, "b": 0.08 }
+      }
+    }
+  },
+  "scripts": [
+    {
+      "assetId": "obby-server-v1",
+      "path": "scripts/obby-server.luau",
+      "targetPath": "game.ServerScriptService.B9_ObbyServer",
+      "className": "Script",
+      "sha256": "96e80e697510eaf5d849c7467cfb76c792cd8d2636f9fcd9231154a389be85aa"
+    },
+    {
+      "assetId": "obby-progress-v1",
+      "path": "scripts/obby-progress.client.luau",
+      "targetPath": "game.StarterGui.B9_ObbyProgress.ProgressClient",
+      "className": "LocalScript",
+      "sha256": "9f8458aced9210e9e564e12e42eb6722e8998bf6dabad3c6c17b2b75aeba020d"
+    }
+  ],
+  "preview": {
+    "summary": "Adds a self-contained B9 obby, checkpoint respawns, a kill floor, a finish trigger, and a progress display.",
+    "includes": [
+      "Start spawn and ordered stage geometry",
+      "Checkpoint and respawn behavior",
+      "Kill floor and finish trigger",
+      "Small progress UI"
+    ]
+  }
+}

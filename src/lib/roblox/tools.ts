@@ -6,7 +6,12 @@
 
 import { tool, type ToolExecutionOptions } from "ai"
 import { z } from "zod"
-import { studioRequest, isStudioConnected, notConnectedError } from "./client"
+import {
+  studioRequest,
+  isStudioConnected,
+  notConnectedError,
+  type StudioRequestContext,
+} from "./client"
 import {
   searchToolbox,
   getAssetDetails,
@@ -15,6 +20,7 @@ import {
 } from "./toolbox"
 import { useAgentStore } from "@/stores/agent"
 import { useSettingsStore } from "@/stores/settings"
+import { withStudioMutationLease } from "@/lib/agent/mutation-lane"
 import {
   askQuestions,
   type AskUserQuestion,
@@ -61,6 +67,30 @@ interface InsertedAssetInfo {
   name: string
   scripts?: unknown
   scriptsQuarantined?: unknown
+}
+
+function studioContextFromOptions(
+  options?: ToolExecutionOptions,
+): StudioRequestContext {
+  const context = options?.experimental_context
+  if (!context || typeof context !== "object") return {}
+  const candidate = context as Record<string, unknown>
+  return {
+    runId: typeof candidate.runId === "string" ? candidate.runId : undefined,
+    ownerId:
+      typeof candidate.ownerId === "string" ? candidate.ownerId : undefined,
+    stepId: typeof candidate.stepId === "string" ? candidate.stepId : undefined,
+  }
+}
+
+function runContextFromOptions(options?: ToolExecutionOptions) {
+  const requestContext = studioContextFromOptions(options)
+  const activeRunId = useAgentStore.getState().runId
+  return {
+    activeRunId,
+    runId: requestContext.runId ?? activeRunId,
+    ownerId: requestContext.ownerId ?? "coordinator",
+  }
 }
 
 const playtestStateResponseSchema = z.object({
@@ -125,7 +155,8 @@ playtest output. This tool cannot start, pause, resume, or stop a playtest.`,
     const result = await studioRequest<unknown>(
       "/playtest/state",
       undefined,
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -176,7 +207,8 @@ redacted, and individual messages plus the total response are strictly capped.`,
     const result = await studioRequest<unknown>(
       "/playtest/logs",
       levels ? { limit, levels } : { limit },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -218,7 +250,8 @@ Examples:
     const result = await studioRequest<ScriptContent>(
       "/script/get",
       { path },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -257,7 +290,8 @@ The path should be the full instance path from game root.`,
     const result = await studioRequest<{ path: string }>(
       "/script/set",
       { path, source },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -295,11 +329,12 @@ Example:
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ path: string; replaced: number }>("/script/edit", {
-      path,
-      oldCode,
-      newCode,
-    }, options?.abortSignal)
+    const result = await studioRequest<{ path: string; replaced: number }>(
+      "/script/edit",
+      { path, oldCode, newCode },
+      options?.abortSignal,
+      studioContextFromOptions(options),
+    )
 
     if (!result.success) {
       return { error: result.error }
@@ -338,7 +373,8 @@ Examples:
     const result = await studioRequest<InstanceInfo[]>(
       "/instance/children",
       { path, recursive },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -380,7 +416,8 @@ Useful for understanding what can be modified on an instance.`,
     const result = await studioRequest<PropertyInfo[]>(
       "/instance/properties",
       { path },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -421,7 +458,8 @@ The value is parsed based on the property type:
     const result = await studioRequest<{ path: string }>(
       "/instance/set",
       { path, property, value },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -460,7 +498,8 @@ Common class names:
     const result = await studioRequest<{ path: string }>(
       "/instance/create",
       { className, parent, name },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -489,7 +528,8 @@ Use with caution - this cannot be undone through the tool.`,
     const result = await studioRequest<{ deleted: string }>(
       "/instance/delete",
       { path },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -519,7 +559,8 @@ If parent is not specified, the clone is placed in the same parent as the origin
     const result = await studioRequest<{ path: string }>(
       "/instance/clone",
       { path, parent },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -562,7 +603,8 @@ Name matching is case-insensitive and supports partial matches.`,
     const result = await studioRequest<InstanceInfo[]>(
       "/instance/search",
       { root, name, className, limit },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -593,7 +635,8 @@ Useful for operating on what the user has selected in the Explorer.`,
     const result = await studioRequest<InstanceInfo[]>(
       "/selection/get",
       undefined,
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -636,7 +679,8 @@ Examples:
     const result = await studioRequest<{ output: string; error?: string }>(
       "/code/run",
       { code },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -674,7 +718,8 @@ Examples:
     const result = await studioRequest<{ path: string }>(
       "/instance/move",
       { path, newParent },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -728,7 +773,8 @@ Example: Create 5 parts in workspace
     }>(
       "/instance/bulk-create",
       { instances },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -781,7 +827,8 @@ WARNING: This cannot be undone through the tool.`,
     }>(
       "/instance/bulk-delete",
       { paths },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -844,7 +891,8 @@ Example: Make all parts red and anchored
     const result = await studioRequest<{ updated: number; errors?: string[] }>(
       "/instance/bulk-set",
       { operations },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     )
     if (!result.success) {
       return { error: result.error }
@@ -1011,7 +1059,8 @@ active by themselves but must still be treated as untrusted code.`,
         assetId,
         parent,
       },
-      options?.abortSignal
+      options?.abortSignal,
+      studioContextFromOptions(options),
     );
 
     if (!result.success) {
@@ -1314,6 +1363,120 @@ function partialMutationApplied(output: unknown) {
   )
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object"
+    ? value as Record<string, unknown>
+    : null
+}
+
+function stringField(value: unknown, key: string) {
+  const record = asRecord(value)
+  return record && typeof record[key] === "string" ? record[key] : undefined
+}
+
+function parentStudioPath(path: string) {
+  const separator = path.lastIndexOf(".")
+  return separator > 0 ? path.slice(0, separator) : path
+}
+
+function uniqueResourceKeys(resourceKeys: Array<string | undefined>) {
+  return [...new Set(resourceKeys.filter((key): key is string => Boolean(key)))].sort()
+}
+
+function arrayRecords(value: unknown, key: string) {
+  const candidate = asRecord(value)?.[key]
+  return Array.isArray(candidate)
+    ? candidate.map(asRecord).filter((item): item is Record<string, unknown> => item !== null)
+    : []
+}
+
+function studioResourceKeys(
+  toolName: RobloxToolName,
+  input: unknown,
+  output?: unknown,
+) {
+  const path = stringField(input, "path")
+  const parent = stringField(input, "parent")
+  const newParent = stringField(input, "newParent")
+
+  switch (toolName) {
+    case "roblox_get_script":
+      return uniqueResourceKeys([path && `script:${path}`])
+    case "roblox_get_properties":
+      return uniqueResourceKeys([path && `properties:${path}`])
+    case "roblox_get_children": {
+      const recursive = asRecord(input)?.recursive === true
+      return uniqueResourceKeys([
+        path && `children:${path}`,
+        recursive && path ? `tree:${path}` : undefined,
+      ])
+    }
+    case "roblox_search":
+      return uniqueResourceKeys(
+        arrayRecords(output, "results").map((result) => {
+          const resultPath = stringField(result, "path")
+          return resultPath && `instance:${resultPath}`
+        }),
+      )
+    case "roblox_get_selection":
+      return uniqueResourceKeys(
+        arrayRecords(output, "selection").map((result) => {
+          const resultPath = stringField(result, "path")
+          return resultPath && `instance:${resultPath}`
+        }),
+      )
+    case "roblox_get_playtest_state":
+      return ["studio:playtest"]
+    case "roblox_set_script":
+    case "roblox_edit_script":
+      return uniqueResourceKeys([path && `script:${path}`])
+    case "roblox_set_property":
+      return uniqueResourceKeys([path && `properties:${path}`])
+    case "roblox_create":
+      return uniqueResourceKeys([parent && `children:${parent}`])
+    case "roblox_delete":
+      return uniqueResourceKeys([path && `children:${parentStudioPath(path)}`])
+    case "roblox_clone": {
+      const createdPath = stringField(output, "path")
+      const destination = parent || (createdPath ? parentStudioPath(createdPath) : undefined)
+      return uniqueResourceKeys([destination && `children:${destination}`])
+    }
+    case "roblox_move":
+      return uniqueResourceKeys([
+        path && `children:${parentStudioPath(path)}`,
+        newParent && `children:${newParent}`,
+      ])
+    case "roblox_bulk_create":
+      return uniqueResourceKeys(
+        arrayRecords(input, "instances").map((instance) => {
+          const instanceParent = stringField(instance, "parent")
+          return instanceParent && `children:${instanceParent}`
+        }),
+      )
+    case "roblox_bulk_delete": {
+      const paths = asRecord(input)?.paths
+      return uniqueResourceKeys(
+        (Array.isArray(paths) ? paths : []).map((item) =>
+          typeof item === "string" ? `children:${parentStudioPath(item)}` : undefined,
+        ),
+      )
+    }
+    case "roblox_bulk_set_property":
+      return uniqueResourceKeys(
+        arrayRecords(input, "operations").map((operation) => {
+          const operationPath = stringField(operation, "path")
+          return operationPath && `properties:${operationPath}`
+        }),
+      )
+    case "roblox_insert_asset":
+      return uniqueResourceKeys([(parent || "game.Workspace") && `children:${parent || "game.Workspace"}`])
+    case "roblox_run_code":
+      return ["studio:any"]
+    default:
+      return []
+  }
+}
+
 function withRunControls<T>(
   toolName: RobloxToolName,
   toolDefinition: T
@@ -1333,6 +1496,23 @@ function withRunControls<T>(
   return {
     ...(toolDefinition as object),
     execute: async (input: unknown, options?: ToolExecutionOptions) => {
+      const runContext = runContextFromOptions(options)
+      if (runContext.runId && runContext.runId !== runContext.activeRunId) {
+        return {
+          error: "This Studio operation belongs to a stale or different run",
+          retryable: false,
+        }
+      }
+      if (options?.abortSignal?.aborted) {
+        return { error: "Agent run cancelled", retryable: false }
+      }
+      if (action && runContext.ownerId !== "coordinator") {
+        return {
+          error: "Only the coordinator can change Roblox Studio",
+          retryable: false,
+        }
+      }
+
       if (action) {
         const approved = await confirmStudioChanges(
           action,
@@ -1350,22 +1530,48 @@ function withRunControls<T>(
         }
       }
 
-      const operation = evidenceKind
-        ? useAgentStore
-            .getState()
-            .beginStudioOperation(toolName, evidenceKind)
-        : null
-      const output = await originalExecute(input, options)
+      // Worker readbacks remain worker-owned typed evidence. They must never
+      // satisfy the coordinator's post-mutation verification requirement.
+      const executeScoped = async () => {
+        const initialResourceKeys = studioResourceKeys(toolName, input)
+        const operation = evidenceKind && runContext.ownerId === "coordinator"
+          ? useAgentStore
+              .getState()
+              .beginStudioOperation(toolName, evidenceKind, initialResourceKeys)
+          : null
+        const output = await originalExecute(input, options)
 
-      if (
-        operation &&
-        (!hasToolError(output) ||
-          (evidenceKind === "mutation" && partialMutationApplied(output)))
-      ) {
-        useAgentStore.getState().completeStudioOperation(operation)
+        if (
+          operation &&
+          (!hasToolError(output) ||
+            (evidenceKind === "mutation" && partialMutationApplied(output)))
+        ) {
+          useAgentStore.getState().completeStudioOperation(
+            operation,
+            studioResourceKeys(toolName, input, output),
+          )
+        }
+
+        return output
       }
 
-      return output
+      if (!action) return executeScoped()
+      try {
+        return await withStudioMutationLease(
+          {
+            runId: runContext.runId,
+            ownerId: runContext.ownerId,
+            signal: options?.abortSignal,
+          },
+          executeScoped,
+        )
+      } catch (error) {
+        return {
+          error:
+            error instanceof Error ? error.message : "Studio mutation failed",
+          retryable: false,
+        }
+      }
     },
   } as T
 }

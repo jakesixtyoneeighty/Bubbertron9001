@@ -1406,6 +1406,1375 @@ handlers["/code/run"] = function(data)
 	return { output = table.concat(output, "\n"), truncated = outputTruncated }
 end
 
+-- Curated starter-game installer. The desktop sends a locally compiled,
+-- allowlisted change set; Studio independently enforces the bounded operation
+-- vocabulary and exact reviewed script assets before applying anything.
+local GAME_TEMPLATE_ID = "obby-starter"
+local GAME_TEMPLATE_VERSION = "1.0.0"
+local MAX_GAME_OPERATIONS = 512
+local MAX_GAME_INSTANCES = 128
+local MAX_GAME_ATTRIBUTES = 8
+local MAX_GAME_PATH_BYTES = 512
+local MAX_GAME_STABLE_ID_BYTES = 128
+local MAX_GAME_SCRIPT_BYTES = 100 * 1024
+local MAX_GAME_SNAPSHOT_INSTANCES = 2000
+local GAME_CLAIMS = {
+	"game.ServerScriptService.B9_ObbyServer",
+	"game.StarterGui.B9_ObbyProgress",
+	"game.Workspace.B9_Obby",
+}
+local GAME_BASE_PARENT_PATHS = {
+	["game.ServerScriptService"] = true,
+	["game.StarterGui"] = true,
+	["game.Workspace"] = true,
+}
+local GAME_OWNERSHIP_MARKER_KEYS = {
+	B9GenerationId = "generationId",
+	B9TemplateId = "templateId",
+	B9TemplateVersion = "templateVersion",
+}
+local GAME_ALLOWED_ATTRIBUTES = {
+	B9GenerationId = true,
+	B9TemplateId = true,
+	B9TemplateVersion = true,
+	B9StageNumber = true,
+}
+local GAME_ALLOWED_ENUMS = {
+	["Enum.Font"] = {
+		["Enum.Font.GothamBold"] = true,
+	},
+	["Enum.Material"] = {
+		["Enum.Material.Grass"] = true,
+		["Enum.Material.Neon"] = true,
+		["Enum.Material.SmoothPlastic"] = true,
+	},
+}
+local GAME_CLASS_PROPERTIES = {
+	Folder = {},
+	Model = {},
+	Part = {
+		Anchored = "boolean",
+		CanCollide = "boolean",
+		Color = "Color3",
+		Material = "Enum.Material",
+		Orientation = "Vector3",
+		Position = "Vector3",
+		Size = "Vector3",
+		Transparency = "number",
+	},
+	SpawnLocation = {
+		Anchored = "boolean",
+		CanCollide = "boolean",
+		Color = "Color3",
+		Duration = "number",
+		Enabled = "boolean",
+		Material = "Enum.Material",
+		Neutral = "boolean",
+		Position = "Vector3",
+		Size = "Vector3",
+		Transparency = "number",
+	},
+	Script = {},
+	LocalScript = {},
+	ScreenGui = {
+		DisplayOrder = "number",
+		IgnoreGuiInset = "boolean",
+		ResetOnSpawn = "boolean",
+	},
+	TextLabel = {
+		BackgroundColor3 = "Color3",
+		BackgroundTransparency = "number",
+		Font = "Enum.Font",
+		Position = "UDim2",
+		Size = "UDim2",
+		Text = "string",
+		TextColor3 = "Color3",
+		TextScaled = "boolean",
+	},
+}
+local GAME_REQUIRED_CREATES = {
+	["game.ServerScriptService.B9_ObbyServer"] = "Script",
+	["game.StarterGui.B9_ObbyProgress"] = "ScreenGui",
+	["game.StarterGui.B9_ObbyProgress.ProgressClient"] = "LocalScript",
+	["game.StarterGui.B9_ObbyProgress.ProgressLabel"] = "TextLabel",
+	["game.Workspace.B9_Obby"] = "Model",
+	["game.Workspace.B9_Obby.Checkpoints"] = "Folder",
+	["game.Workspace.B9_Obby.Finish"] = "Part",
+	["game.Workspace.B9_Obby.KillFloor"] = "Part",
+	["game.Workspace.B9_Obby.Stages"] = "Folder",
+	["game.Workspace.B9_Obby.Start"] = "SpawnLocation",
+}
+local GAME_REQUIRED_PROPERTIES = {
+	["game.StarterGui.B9_ObbyProgress"] = {
+		DisplayOrder = true,
+		IgnoreGuiInset = true,
+		ResetOnSpawn = true,
+	},
+	["game.StarterGui.B9_ObbyProgress.ProgressLabel"] = {
+		BackgroundColor3 = true,
+		BackgroundTransparency = true,
+		Font = true,
+		Position = true,
+		Size = true,
+		Text = true,
+		TextColor3 = true,
+		TextScaled = true,
+	},
+	["game.Workspace.B9_Obby.Finish"] = {
+		Anchored = true,
+		CanCollide = true,
+		Color = true,
+		Material = true,
+		Position = true,
+		Size = true,
+	},
+	["game.Workspace.B9_Obby.KillFloor"] = {
+		Anchored = true,
+		CanCollide = true,
+		Color = true,
+		Material = true,
+		Position = true,
+		Size = true,
+		Transparency = true,
+	},
+	["game.Workspace.B9_Obby.Start"] = {
+		Anchored = true,
+		CanCollide = true,
+		Color = true,
+		Duration = true,
+		Enabled = true,
+		Material = true,
+		Neutral = true,
+		Position = true,
+		Size = true,
+	},
+}
+local GAME_STAGE_PROPERTIES = {
+	Anchored = true,
+	CanCollide = true,
+	Color = true,
+	Material = true,
+	Orientation = true,
+	Position = true,
+	Size = true,
+}
+local GAME_CHECKPOINT_PROPERTIES = {
+	Anchored = true,
+	CanCollide = true,
+	Color = true,
+	Duration = true,
+	Enabled = true,
+	Material = true,
+	Neutral = true,
+	Position = true,
+	Size = true,
+}
+local TRUSTED_GAME_SCRIPTS = {
+	["obby-server-v1"] = {
+		targetPath = "game.ServerScriptService.B9_ObbyServer",
+		hash = "96e80e697510eaf5d849c7467cfb76c792cd8d2636f9fcd9231154a389be85aa",
+		source = [=[--!strict
+
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+
+local root = Workspace:WaitForChild("B9_Obby")
+local checkpoints = root:WaitForChild("Checkpoints")
+local killFloor = root:WaitForChild("KillFloor")
+local finish = root:WaitForChild("Finish")
+
+local function playerFromHit(hit: BasePart): Player?
+	local character = hit.Parent
+	if character == nil then
+		return nil
+	end
+
+	local humanoid = character:FindFirstChildOfClass("Humanoid")
+	if humanoid == nil then
+		return nil
+	end
+
+	return Players:GetPlayerFromCharacter(character)
+end
+
+local function initializePlayer(player: Player)
+	if player:GetAttribute("B9ObbyStage") == nil then
+		player:SetAttribute("B9ObbyStage", 0)
+	end
+	if player:GetAttribute("B9ObbyFinished") == nil then
+		player:SetAttribute("B9ObbyFinished", false)
+	end
+end
+
+for _, checkpoint in checkpoints:GetChildren() do
+	if checkpoint:IsA("SpawnLocation") then
+		checkpoint.Touched:Connect(function(hit)
+			local player = playerFromHit(hit)
+			local stageNumber = checkpoint:GetAttribute("B9StageNumber")
+			if player == nil or typeof(stageNumber) ~= "number" then
+				return
+			end
+
+			local currentStage = player:GetAttribute("B9ObbyStage")
+			if typeof(currentStage) ~= "number" or stageNumber > currentStage then
+				player:SetAttribute("B9ObbyStage", stageNumber)
+			end
+			player.RespawnLocation = checkpoint
+		end)
+	end
+end
+
+if killFloor:IsA("BasePart") then
+	killFloor.Touched:Connect(function(hit)
+		local character = hit.Parent
+		local humanoid = if character then character:FindFirstChildOfClass("Humanoid") else nil
+		if humanoid then
+			humanoid.Health = 0
+		end
+	end)
+end
+
+if finish:IsA("BasePart") then
+	finish.Touched:Connect(function(hit)
+		local player = playerFromHit(hit)
+		if player then
+			player:SetAttribute("B9ObbyFinished", true)
+		end
+	end)
+end
+
+Players.PlayerAdded:Connect(initializePlayer)
+for _, player in Players:GetPlayers() do
+	initializePlayer(player)
+end
+]=],
+	},
+	["obby-progress-v1"] = {
+		targetPath = "game.StarterGui.B9_ObbyProgress.ProgressClient",
+		hash = "9f8458aced9210e9e564e12e42eb6722e8998bf6dabad3c6c17b2b75aeba020d",
+		source = [=[--!strict
+
+local Players = game:GetService("Players")
+
+local player = Players.LocalPlayer
+local label = script.Parent:WaitForChild("ProgressLabel")
+
+local function render()
+	if not label:IsA("TextLabel") then
+		return
+	end
+
+	if player:GetAttribute("B9ObbyFinished") == true then
+		label.Text = "Obby complete!"
+		return
+	end
+
+	local stage = player:GetAttribute("B9ObbyStage")
+	local stageNumber = if typeof(stage) == "number" then stage else 0
+	label.Text = string.format("Stage %d", stageNumber)
+end
+
+player:GetAttributeChangedSignal("B9ObbyStage"):Connect(render)
+player:GetAttributeChangedSignal("B9ObbyFinished"):Connect(render)
+render()
+]=],
+	},
+}
+
+local function gamePathWithin(path, root)
+	return path == root or string.sub(path, 1, #root + 1) == root .. "."
+end
+
+local function gameClaimForPath(path)
+	for _, claim in ipairs(GAME_CLAIMS) do
+		if gamePathWithin(path, claim) then
+			return claim
+		end
+	end
+	return nil
+end
+
+local function getOptionalGameInstance(path)
+	local instance, pathError = getInstanceFromPath(path)
+	if instance then
+		return instance
+	end
+	if type(pathError) ~= "string"
+		or string.find(pathError, "No child named '", 1, true) ~= 1 then
+		error("Starter-game path error: " .. tostring(pathError))
+	end
+	return nil
+end
+
+local function gameParentPath(path)
+	return string.match(path, "^(.+)%.[^.]+$")
+end
+
+local function gameInstanceName(path)
+	return string.match(path, "([^.]+)$")
+end
+
+local function gamePathDepth(path)
+	return #string.split(path, ".")
+end
+
+local function isFiniteGameNumber(value)
+	return type(value) == "number"
+		and value == value
+		and value ~= math.huge
+		and value ~= -math.huge
+end
+
+local function isGameStableId(value)
+	return type(value) == "string"
+		and #value >= 1
+		and #value <= MAX_GAME_STABLE_ID_BYTES
+		and string.match(value, "^[A-Za-z0-9][A-Za-z0-9._:%-]*$") ~= nil
+end
+
+local function isGameSha256(value)
+	return type(value) == "string"
+		and #value == 64
+		and string.match(value, "^[a-f0-9]+$") ~= nil
+end
+
+local function isGameStudioPath(value)
+	if type(value) ~= "string" or #value < 6 or #value > MAX_GAME_PATH_BYTES then
+		return false
+	end
+	local segments = string.split(value, ".")
+	if segments[1] ~= "game" or #segments < 2 then
+		return false
+	end
+	for index = 2, #segments do
+		if string.match(segments[index], "^[A-Za-z_][A-Za-z0-9_]*$") == nil then
+			return false
+		end
+	end
+	return true
+end
+
+local function assertDenseGameArray(value, label, minimum, maximum)
+	if type(value) ~= "table" then
+		error(label .. " must be an array")
+	end
+	local count = 0
+	for key in pairs(value) do
+		if type(key) ~= "number" or key % 1 ~= 0 or key < 1 then
+			error(label .. " must be a dense array")
+		end
+		count += 1
+	end
+	if count < minimum or count > maximum then
+		error(label .. " count is outside its safety limit")
+	end
+	for index = 1, count do
+		if value[index] == nil then
+			error(label .. " must be a dense array")
+		end
+	end
+	return count
+end
+
+local function assertGameObjectKeys(value, allowedKeys, label)
+	if type(value) ~= "table" then
+		error(label .. " must be an object")
+	end
+	for key in pairs(value) do
+		if type(key) ~= "string" or not allowedKeys[key] then
+			error(label .. " contains an unsupported field")
+		end
+	end
+end
+
+local function gameMarkersEqual(left, right)
+	return type(left) == "table"
+		and type(right) == "table"
+		and left.generationId == right.generationId
+		and left.templateId == right.templateId
+		and left.templateVersion == right.templateVersion
+end
+
+local function decodeGameProperty(value, expectedKind)
+	if expectedKind == "string" then
+		if type(value) ~= "string" or #value > 4000 then
+			error("Expected bounded string property value")
+		end
+		return value
+	end
+	if expectedKind == "number" then
+		if not isFiniteGameNumber(value) or value < -1000000 or value > 1000000 then
+			error("Expected bounded number property value")
+		end
+		return value
+	end
+	if expectedKind == "boolean" then
+		if type(value) ~= "boolean" then
+			error("Expected " .. expectedKind .. " property value")
+		end
+		return value
+	end
+	if expectedKind == "Vector3" then
+		assertGameObjectKeys(value, { type = true, x = true, y = true, z = true }, "Vector3 value")
+		if value.type ~= "Vector3"
+			or not isFiniteGameNumber(value.x) or math.abs(value.x) > 100000
+			or not isFiniteGameNumber(value.y) or math.abs(value.y) > 100000
+			or not isFiniteGameNumber(value.z) or math.abs(value.z) > 100000 then
+			error("Expected bounded Vector3 property value")
+		end
+		return Vector3.new(value.x, value.y, value.z)
+	end
+	if expectedKind == "Color3" then
+		assertGameObjectKeys(value, { type = true, r = true, g = true, b = true }, "Color3 value")
+		if value.type ~= "Color3"
+			or not isFiniteGameNumber(value.r) or value.r < 0 or value.r > 1
+			or not isFiniteGameNumber(value.g) or value.g < 0 or value.g > 1
+			or not isFiniteGameNumber(value.b) or value.b < 0 or value.b > 1 then
+			error("Expected bounded Color3 property value")
+		end
+		return Color3.new(value.r, value.g, value.b)
+	end
+	if expectedKind == "UDim2" then
+		assertGameObjectKeys(
+			value,
+			{ type = true, xScale = true, xOffset = true, yScale = true, yOffset = true },
+			"UDim2 value"
+		)
+		if value.type ~= "UDim2"
+			or not isFiniteGameNumber(value.xScale) or math.abs(value.xScale) > 10
+			or not isFiniteGameNumber(value.xOffset) or math.abs(value.xOffset) > 10000
+			or not isFiniteGameNumber(value.yScale) or math.abs(value.yScale) > 10
+			or not isFiniteGameNumber(value.yOffset) or math.abs(value.yOffset) > 10000 then
+			error("Expected bounded UDim2 property value")
+		end
+		return UDim2.new(value.xScale, value.xOffset, value.yScale, value.yOffset)
+	end
+	if GAME_ALLOWED_ENUMS[expectedKind] then
+		assertGameObjectKeys(value, { type = true, value = true }, "Enum value")
+		if value.type ~= "Enum" or not GAME_ALLOWED_ENUMS[expectedKind][value.value] then
+			error("Enum property value is not allowlisted")
+		end
+		local enumTypeName, enumItemName = string.match(value.value or "", "^Enum%.([%w_]+)%.([%w_]+)$")
+		local enumType = enumTypeName and Enum[enumTypeName]
+		local enumItem = enumType and enumType[enumItemName]
+		if not enumItem then
+			error("Invalid enum property value")
+		end
+		return enumItem
+	end
+	error("Unsupported property value kind")
+end
+
+local function encodeGameProperty(value)
+	local kind = typeof(value)
+	if kind == "string" then
+		return string.sub(value, 1, 4000)
+	end
+	if kind == "Vector3" then
+		return { type = "Vector3", x = value.X, y = value.Y, z = value.Z }
+	end
+	if kind == "Color3" then
+		return { type = "Color3", r = value.R, g = value.G, b = value.B }
+	end
+	if kind == "UDim2" then
+		return {
+			type = "UDim2",
+			xScale = value.X.Scale,
+			xOffset = value.X.Offset,
+			yScale = value.Y.Scale,
+			yOffset = value.Y.Offset,
+		}
+	end
+	if kind == "EnumItem" then
+		return { type = "Enum", value = tostring(value) }
+	end
+	return value
+end
+
+local function gameRevisionValue(value)
+	local kind = typeof(value)
+	if kind == "Vector3" then
+		return string.format("Vector3(%.17g,%.17g,%.17g)", value.X, value.Y, value.Z)
+	end
+	if kind == "Color3" then
+		return string.format("Color3(%.17g,%.17g,%.17g)", value.R, value.G, value.B)
+	end
+	if kind == "UDim2" then
+		return string.format(
+			"UDim2(%.17g,%.17g,%.17g,%.17g)",
+			value.X.Scale,
+			value.X.Offset,
+			value.Y.Scale,
+			value.Y.Offset
+		)
+	end
+	return kind .. "(" .. tostring(value) .. ")"
+end
+
+local function readGameScriptSource(instance)
+	if not instance:IsA("LuaSourceContainer") then
+		return nil
+	end
+	local editorSuccess, editorSource = pcall(function()
+		return ScriptEditorService:GetEditorSource(instance)
+	end)
+	if editorSuccess and type(editorSource) == "string" then
+		return editorSource
+	end
+	local sourceSuccess, source = pcall(function()
+		return instance.Source
+	end)
+	if sourceSuccess and type(source) == "string" then
+		return source
+	end
+	return nil
+end
+
+local TRUSTED_GAME_SCRIPTS_BY_PATH = {}
+for _, trusted in pairs(TRUSTED_GAME_SCRIPTS) do
+	TRUSTED_GAME_SCRIPTS_BY_PATH[trusted.targetPath] = trusted
+end
+
+local function gameValuesEqual(actual, expected, expectedKind)
+	local decoded = decodeGameProperty(expected, expectedKind)
+	local kind = typeof(decoded)
+	if kind == "Vector3" then
+		return (actual - decoded).Magnitude < 0.0001
+	end
+	if kind == "Color3" then
+		return math.abs(actual.R - decoded.R) < 0.0001
+			and math.abs(actual.G - decoded.G) < 0.0001
+			and math.abs(actual.B - decoded.B) < 0.0001
+	end
+	return actual == decoded
+end
+
+local function gameSnapshot(templateId)
+	if templateId ~= GAME_TEMPLATE_ID then
+		error("Unknown starter-game template")
+	end
+	local instances = {}
+	local revisionParts = {}
+	for _, claim in ipairs(GAME_CLAIMS) do
+		local root = getOptionalGameInstance(claim)
+		if root then
+			local candidates = { root }
+			local descendants = root:GetDescendants()
+			if #instances + #descendants + 1 > MAX_GAME_SNAPSHOT_INSTANCES then
+				error("Starter-game snapshot exceeds its instance safety limit")
+			end
+			for _, descendant in ipairs(descendants) do
+				table.insert(candidates, descendant)
+			end
+			table.sort(candidates, function(left, right)
+				return getInstancePath(left) < getInstancePath(right)
+			end)
+			for _, instance in ipairs(candidates) do
+				local path = getInstancePath(instance)
+				local generationId = instance:GetAttribute("B9GenerationId")
+				local ownedTemplateId = instance:GetAttribute("B9TemplateId")
+				local templateVersion = instance:GetAttribute("B9TemplateVersion")
+				local info = { path = path, className = instance.ClassName }
+				if isGameStableId(generationId)
+					and isGameStableId(ownedTemplateId)
+					and type(templateVersion) == "string"
+					and string.match(templateVersion, "^%d+%.%d+%.%d+$") ~= nil then
+					info.ownership = {
+						generationId = generationId,
+						templateId = ownedTemplateId,
+						templateVersion = templateVersion,
+					}
+				end
+				local propertySpec = GAME_CLASS_PROPERTIES[instance.ClassName]
+				if propertySpec then
+					local properties = {}
+					local propertyNames = {}
+					for propertyName in pairs(propertySpec) do
+						table.insert(propertyNames, propertyName)
+					end
+					table.sort(propertyNames)
+					for _, propertyName in ipairs(propertyNames) do
+						local ok, propertyValue = pcall(function()
+							return instance[propertyName]
+						end)
+						if ok then
+							properties[propertyName] = encodeGameProperty(propertyValue)
+							table.insert(
+								revisionParts,
+								path .. ":property:" .. propertyName .. "=" .. gameRevisionValue(propertyValue)
+							)
+						end
+					end
+					info.properties = properties
+				end
+				local sourceHash = instance:GetAttribute("B9SourceHash")
+				local trustedScript = TRUSTED_GAME_SCRIPTS_BY_PATH[path]
+				if trustedScript then
+					local actualSource = readGameScriptSource(instance)
+					if actualSource == trustedScript.source and sourceHash == trustedScript.hash then
+						info.scriptHash = trustedScript.hash
+					end
+					local revisionSource = actualSource
+					if type(revisionSource) ~= "string" then
+						revisionSource = "<unreadable>"
+					elseif #revisionSource > MAX_GAME_SCRIPT_BYTES then
+						revisionSource = string.sub(revisionSource, 1, MAX_GAME_SCRIPT_BYTES)
+							.. ":<truncated>:"
+							.. tostring(#actualSource)
+					end
+					table.insert(revisionParts, path .. ":source=" .. revisionSource)
+				end
+				local attributeNames = {
+					"B9GenerationId",
+					"B9SourceHash",
+					"B9StageNumber",
+					"B9TemplateId",
+					"B9TemplateVersion",
+				}
+				for _, attributeName in ipairs(attributeNames) do
+					table.insert(
+						revisionParts,
+						path
+							.. ":attribute:"
+							.. attributeName
+							.. "="
+							.. gameRevisionValue(instance:GetAttribute(attributeName))
+					)
+				end
+				table.insert(revisionParts, path .. ":class=" .. instance.ClassName)
+				table.insert(instances, info)
+			end
+		end
+	end
+
+	local hash = 5381
+	local revisionText = table.concat(revisionParts, "|")
+	for index = 1, #revisionText do
+		hash = (hash * 33 + string.byte(revisionText, index)) % 4294967296
+	end
+	return {
+		schemaVersion = "b9.studio-snapshot/v1",
+		revision = string.format("revision-%08x", math.floor(hash)),
+		completePaths = GAME_CLAIMS,
+		contentHashes = {},
+		instances = instances,
+	}
+end
+
+local function validateGameChangeSet(changeSet)
+	if type(changeSet) ~= "table"
+		or changeSet.schemaVersion ~= "b9.changeset/v1"
+		or type(changeSet.source) ~= "table"
+		or changeSet.source.type ~= "game_template"
+		or changeSet.source.templateId ~= GAME_TEMPLATE_ID
+		or changeSet.source.templateVersion ~= GAME_TEMPLATE_VERSION
+		or not isGameSha256(changeSet.source.optionsHash) then
+		error("Unsupported starter-game change set")
+	end
+
+	if type(changeSet.base) ~= "table"
+		or not isGameStableId(changeSet.base.studioRevision)
+		or type(changeSet.base.contentHashes) ~= "table" then
+		error("Invalid starter-game base snapshot")
+	end
+	local contentHashCount = 0
+	for path, hash in pairs(changeSet.base.contentHashes) do
+		contentHashCount += 1
+		if contentHashCount > MAX_GAME_INSTANCES
+			or not isGameStudioPath(path)
+			or not gameClaimForPath(path)
+			or not isGameSha256(hash) then
+			error("Invalid starter-game base content hash")
+		end
+	end
+
+	local marker = changeSet.ownership and changeSet.ownership.marker
+	if type(marker) ~= "table"
+		or not isGameStableId(marker.generationId)
+		or marker.templateId ~= GAME_TEMPLATE_ID
+		or marker.templateVersion ~= GAME_TEMPLATE_VERSION then
+		error("Invalid starter-game ownership marker")
+	end
+
+	assertDenseGameArray(changeSet.claims, "Starter-game claims", #GAME_CLAIMS, #GAME_CLAIMS)
+	local expectedClaims = {}
+	for _, claim in ipairs(GAME_CLAIMS) do
+		expectedClaims[claim] = true
+	end
+	for _, claim in ipairs(changeSet.claims) do
+		if type(claim) ~= "table"
+			or claim.access ~= "exclusive_create"
+			or not expectedClaims[claim.path] then
+			error("Starter-game claims do not match the curated template")
+		end
+		expectedClaims[claim.path] = nil
+	end
+	if next(expectedClaims) ~= nil then
+		error("Starter-game claims are incomplete")
+	end
+
+	assertDenseGameArray(
+		changeSet.operations,
+		"Starter-game operations",
+		1,
+		MAX_GAME_OPERATIONS
+	)
+	local createsByPath = {}
+	local operationsById = {}
+	local createCount = 0
+	for _, operation in ipairs(changeSet.operations) do
+		if type(operation) ~= "table"
+			or not isGameStableId(operation.operationId)
+			or operationsById[operation.operationId] then
+			error("Invalid or duplicate starter-game operation ID")
+		end
+		operationsById[operation.operationId] = operation
+		if not isGameStudioPath(operation.targetPath)
+			or operation.claimPath ~= gameClaimForPath(operation.targetPath) then
+			error("Starter-game operation escaped its claim")
+		end
+
+		if operation.type == "create_instance" then
+			createCount += 1
+			if createCount > MAX_GAME_INSTANCES
+				or not GAME_CLASS_PROPERTIES[operation.className]
+				or operation.parentPath ~= gameParentPath(operation.targetPath)
+				or operation.name ~= gameInstanceName(operation.targetPath)
+				or type(operation.name) ~= "string"
+				or #operation.name > 64
+				or string.match(operation.name, "^[A-Za-z_][A-Za-z0-9_]*$") == nil
+				or createsByPath[operation.targetPath] then
+				error("Invalid starter-game create operation")
+			end
+			if not gameMarkersEqual(operation.ownership, marker)
+				or type(operation.attributes) ~= "table" then
+				error("Starter-game create ownership does not match")
+			end
+
+			local attributeCount = 0
+			for attribute, value in pairs(operation.attributes) do
+				attributeCount += 1
+				if attributeCount > MAX_GAME_ATTRIBUTES
+					or not GAME_ALLOWED_ATTRIBUTES[attribute]
+					or (type(value) ~= "string"
+						and type(value) ~= "number"
+						and type(value) ~= "boolean") then
+					error("Unsupported starter-game attribute")
+				end
+				if type(value) == "string" and #value > 256 then
+					error("Starter-game attribute string is too large")
+				end
+				if type(value) == "number" and not isFiniteGameNumber(value) then
+					error("Starter-game attribute number must be finite")
+				end
+			end
+			for ownershipAttribute, markerKey in pairs(GAME_OWNERSHIP_MARKER_KEYS) do
+				if operation.attributes[ownershipAttribute] ~= marker[markerKey] then
+					error("Starter-game create ownership attributes do not match")
+				end
+			end
+			local stageNumber = operation.attributes.B9StageNumber
+			if stageNumber ~= nil
+				and (not isFiniteGameNumber(stageNumber)
+					or stageNumber % 1 ~= 0
+					or stageNumber < 1
+					or stageNumber > 15) then
+				error("Starter-game stage number is outside the template bounds")
+			end
+			createsByPath[operation.targetPath] = operation
+		elseif operation.type ~= "set_property" and operation.type ~= "set_script_source" then
+			error("Unsupported starter-game operation")
+		end
+	end
+	if createCount < 1 then
+		error("Starter-game change set creates no instances")
+	end
+
+	for path, create in pairs(createsByPath) do
+		if not GAME_BASE_PARENT_PATHS[create.parentPath]
+			and not createsByPath[create.parentPath] then
+			error("Starter-game create parent is outside the bounded manifest: " .. path)
+		end
+	end
+	for requiredPath, requiredClass in pairs(GAME_REQUIRED_CREATES) do
+		local create = createsByPath[requiredPath]
+		if not create or create.className ~= requiredClass then
+			error("Starter-game change set is missing required instance: " .. requiredPath)
+		end
+	end
+
+	local stages = {}
+	local checkpoints = {}
+	for path, create in pairs(createsByPath) do
+		if not GAME_REQUIRED_CREATES[path] then
+			local stageText = string.match(
+				path,
+				"^game%.Workspace%.B9_Obby%.Stages%.Stage_(%d%d)$"
+			)
+			local checkpointText = string.match(
+				path,
+				"^game%.Workspace%.B9_Obby%.Checkpoints%.Checkpoint_(%d%d)$"
+			)
+			if stageText and create.className == "Part" then
+				local stage = tonumber(stageText)
+				if not stage or stages[stage]
+					or create.attributes.B9StageNumber ~= stage then
+					error("Invalid starter-game stage instance: " .. path)
+				end
+				stages[stage] = true
+			elseif checkpointText and create.className == "SpawnLocation" then
+				local stage = tonumber(checkpointText)
+				if not stage or checkpoints[stage]
+					or create.attributes.B9StageNumber ~= stage then
+					error("Invalid starter-game checkpoint instance: " .. path)
+				end
+				checkpoints[stage] = true
+			else
+				error("Starter-game instance is outside the curated structure: " .. path)
+			end
+		elseif create.attributes.B9StageNumber ~= nil then
+			error("Only stage and checkpoint instances may carry B9StageNumber")
+		end
+	end
+
+	local stageCount = 0
+	for stage in pairs(stages) do
+		stageCount += 1
+		if not checkpoints[stage] then
+			error("Starter-game stage is missing its checkpoint")
+		end
+	end
+	local checkpointCount = 0
+	for stage in pairs(checkpoints) do
+		checkpointCount += 1
+		if not stages[stage] then
+			error("Starter-game checkpoint is missing its stage")
+		end
+	end
+	if stageCount ~= checkpointCount
+		or (stageCount ~= 5 and stageCount ~= 10 and stageCount ~= 15) then
+		error("Starter-game stage count must be 5, 10, or 15")
+	end
+	for stage = 1, stageCount do
+		if not stages[stage] or not checkpoints[stage] then
+			error("Starter-game stages must be sequential")
+		end
+	end
+	if createCount ~= 10 + stageCount * 2 then
+		error("Starter-game instance count does not match its stage count")
+	end
+
+	local propertiesByPath = {}
+	local mutationKeys = {}
+	local trustedAssets = {}
+	for _, operation in ipairs(changeSet.operations) do
+		if operation.type ~= "create_instance" then
+			local create = createsByPath[operation.targetPath]
+			if not create then
+				error("Starter-game mutation target is not manifest-owned")
+			end
+			if operation.type == "set_property" then
+				if type(operation.property) ~= "string" or #operation.property > 64 then
+					error("Invalid starter-game property name")
+				end
+				local expectedKind = GAME_CLASS_PROPERTIES[create.className][operation.property]
+				local mutationKey = operation.targetPath .. ":property:" .. tostring(operation.property)
+				if not expectedKind or mutationKeys[mutationKey] then
+					error("Unsupported or duplicate starter-game property")
+				end
+				decodeGameProperty(operation.value, expectedKind)
+				mutationKeys[mutationKey] = true
+				propertiesByPath[operation.targetPath] =
+					propertiesByPath[operation.targetPath] or {}
+				propertiesByPath[operation.targetPath][operation.property] = true
+			else
+				if not isGameStableId(operation.assetId) then
+					error("Invalid starter-game script asset ID")
+				end
+				local trusted = TRUSTED_GAME_SCRIPTS[operation.assetId]
+				local mutationKey = operation.targetPath .. ":script"
+				if mutationKeys[mutationKey]
+					or trustedAssets[operation.assetId]
+					or (create.className ~= "Script" and create.className ~= "LocalScript")
+					or not trusted
+					or trusted.targetPath ~= operation.targetPath
+					or trusted.hash ~= operation.sourceHash
+					or trusted.source ~= operation.source
+					or operation.trust ~= "bundled_reviewed" then
+					error("Starter-game script is not the exact reviewed asset")
+				end
+				mutationKeys[mutationKey] = true
+				trustedAssets[operation.assetId] = true
+			end
+		end
+	end
+	for assetId in pairs(TRUSTED_GAME_SCRIPTS) do
+		if not trustedAssets[assetId] then
+			error("Starter-game change set is missing reviewed script: " .. assetId)
+		end
+	end
+
+	for path in pairs(createsByPath) do
+		local requiredProperties = GAME_REQUIRED_PROPERTIES[path]
+		if string.match(path, "^game%.Workspace%.B9_Obby%.Stages%.Stage_%d%d$") then
+			requiredProperties = GAME_STAGE_PROPERTIES
+		elseif string.match(
+			path,
+			"^game%.Workspace%.B9_Obby%.Checkpoints%.Checkpoint_%d%d$"
+		) then
+			requiredProperties = GAME_CHECKPOINT_PROPERTIES
+		end
+		local actualProperties = propertiesByPath[path] or {}
+		if requiredProperties then
+			for property in pairs(requiredProperties) do
+				if not actualProperties[property] then
+					error("Starter-game instance is missing required property: " .. path .. "." .. property)
+				end
+			end
+			for property in pairs(actualProperties) do
+				if not requiredProperties[property] then
+					error("Starter-game instance has an unexpected property: " .. path .. "." .. property)
+				end
+			end
+		elseif next(actualProperties) ~= nil then
+			error("Starter-game container has unexpected properties: " .. path)
+		end
+	end
+
+	assertDenseGameArray(
+		changeSet.ownership.ownedPaths,
+		"Starter-game owned paths",
+		createCount,
+		createCount
+	)
+	local ownedPaths = {}
+	for _, path in ipairs(changeSet.ownership.ownedPaths) do
+		if ownedPaths[path] or not createsByPath[path] then
+			error("Starter-game owned paths do not match its created instances")
+		end
+		ownedPaths[path] = true
+	end
+
+	local cleanup = changeSet.cleanup
+	if type(cleanup) ~= "table"
+		or cleanup.strategy ~= "delete_owned_paths"
+		or cleanup.requireOwnershipMatch ~= true
+		or cleanup.preserveUnknownDescendants ~= true then
+		error("Invalid starter-game cleanup contract")
+	end
+	assertDenseGameArray(cleanup.paths, "Starter-game cleanup paths", createCount, createCount)
+	local expectedCleanup = {}
+	for path in pairs(createsByPath) do
+		table.insert(expectedCleanup, path)
+	end
+	table.sort(expectedCleanup, function(left, right)
+		local leftDepth = gamePathDepth(left)
+		local rightDepth = gamePathDepth(right)
+		return leftDepth > rightDepth or (leftDepth == rightDepth and left > right)
+	end)
+	for index, path in ipairs(cleanup.paths) do
+		if path ~= expectedCleanup[index] then
+			error("Starter-game cleanup paths are not complete and leaf-first")
+		end
+	end
+
+	assertDenseGameArray(
+		changeSet.verification,
+		"Starter-game verification assertions",
+		1,
+		1024
+	)
+	local expectedAssertionKeys = {}
+	for _, operation in ipairs(changeSet.operations) do
+		if operation.type == "create_instance" then
+			expectedAssertionKeys["instance:" .. operation.operationId] = true
+			expectedAssertionKeys["ownership:" .. operation.operationId] = true
+		elseif operation.type == "set_property" then
+			expectedAssertionKeys["property:" .. operation.operationId] = true
+		else
+			expectedAssertionKeys["script_hash:" .. operation.operationId] = true
+		end
+	end
+
+	local assertionIds = {}
+	for _, assertion in ipairs(changeSet.verification) do
+		if type(assertion) ~= "table"
+			or not isGameStableId(assertion.assertionId)
+			or assertionIds[assertion.assertionId]
+			or not isGameStableId(assertion.operationId) then
+			error("Invalid or duplicate starter-game verification assertion")
+		end
+		local operation = operationsById[assertion.operationId]
+		if not operation or assertion.path ~= operation.targetPath then
+			error("Starter-game verification assertion escaped its operation")
+		end
+
+		local assertionKey = tostring(assertion.type) .. ":" .. assertion.operationId
+		if not expectedAssertionKeys[assertionKey] then
+			error("Unexpected or duplicate starter-game verification assertion")
+		end
+		if assertion.type == "instance" then
+			assertGameObjectKeys(assertion, {
+				assertionId = true,
+				operationId = true,
+				path = true,
+				type = true,
+				className = true,
+			}, "Instance verification assertion")
+			if operation.type ~= "create_instance"
+				or assertion.className ~= operation.className then
+				error("Starter-game instance assertion does not match its create operation")
+			end
+		elseif assertion.type == "ownership" then
+			assertGameObjectKeys(assertion, {
+				assertionId = true,
+				operationId = true,
+				path = true,
+				type = true,
+				expected = true,
+			}, "Ownership verification assertion")
+			assertGameObjectKeys(assertion.expected, {
+				generationId = true,
+				templateId = true,
+				templateVersion = true,
+			}, "Ownership verification value")
+			if operation.type ~= "create_instance"
+				or not gameMarkersEqual(assertion.expected, marker) then
+				error("Starter-game ownership assertion does not match its create operation")
+			end
+		elseif assertion.type == "property" then
+			assertGameObjectKeys(assertion, {
+				assertionId = true,
+				operationId = true,
+				path = true,
+				type = true,
+				property = true,
+				expected = true,
+			}, "Property verification assertion")
+			if operation.type ~= "set_property"
+				or assertion.property ~= operation.property then
+				error("Starter-game property assertion does not match its operation")
+			end
+			local create = createsByPath[operation.targetPath]
+			local expectedKind = GAME_CLASS_PROPERTIES[create.className][operation.property]
+			local operationValue = decodeGameProperty(operation.value, expectedKind)
+			if not gameValuesEqual(operationValue, assertion.expected, expectedKind) then
+				error("Starter-game property assertion expected value does not match")
+			end
+		elseif assertion.type == "script_hash" then
+			assertGameObjectKeys(assertion, {
+				assertionId = true,
+				operationId = true,
+				path = true,
+				type = true,
+				expectedHash = true,
+			}, "Script verification assertion")
+			if operation.type ~= "set_script_source"
+				or assertion.expectedHash ~= operation.sourceHash then
+				error("Starter-game script assertion does not match its operation")
+			end
+		else
+			error("Unsupported starter-game verification assertion")
+		end
+
+		assertionIds[assertion.assertionId] = true
+		expectedAssertionKeys[assertionKey] = nil
+	end
+	if next(expectedAssertionKeys) ~= nil then
+		error("Starter-game verification assertions are incomplete")
+	end
+	return marker, createsByPath, operationsById
+end
+
+local function assertGameOwnership(instance, marker)
+	if instance:GetAttribute("B9GenerationId") ~= marker.generationId
+		or instance:GetAttribute("B9TemplateId") ~= marker.templateId
+		or instance:GetAttribute("B9TemplateVersion") ~= marker.templateVersion then
+		error("Starter-game path is owned by another generation: " .. getInstancePath(instance))
+	end
+end
+
+local function verifyGameChangeSet(changeSet)
+	local marker, createsByPath, operationsById = validateGameChangeSet(changeSet)
+	local verified = {}
+	for _, assertion in ipairs(changeSet.verification) do
+		local operation = operationsById[assertion.operationId]
+		local instance = requireInstanceFromPath(assertion.path, "Generated instance")
+		if assertion.type == "instance" then
+			if instance.ClassName ~= assertion.className then
+				error("Generated instance class mismatch: " .. assertion.path)
+			end
+			for attribute, expected in pairs(operation.attributes) do
+				if instance:GetAttribute(attribute) ~= expected then
+					error("Generated attribute verification failed: " .. assertion.path .. "." .. attribute)
+				end
+			end
+		elseif assertion.type == "ownership" then
+			assertGameOwnership(instance, marker)
+		elseif assertion.type == "property" then
+			local create = createsByPath[assertion.path]
+			local expectedKind = GAME_CLASS_PROPERTIES[create.className][assertion.property]
+			if not gameValuesEqual(instance[assertion.property], assertion.expected, expectedKind) then
+				error("Generated property verification failed: " .. assertion.path .. "." .. assertion.property)
+			end
+		elseif assertion.type == "script_hash" then
+			local trusted = TRUSTED_GAME_SCRIPTS[operation.assetId]
+			local source = readGameScriptSource(instance)
+			if source ~= trusted.source or instance:GetAttribute("B9SourceHash") ~= trusted.hash then
+				error("Generated script verification failed: " .. assertion.path)
+			end
+		end
+		table.insert(verified, assertion.assertionId)
+	end
+	table.sort(verified)
+	return verified
+end
+
+handlers["/game/snapshot"] = function(data)
+	return gameSnapshot(data.templateId)
+end
+
+handlers["/game/install"] = function(data)
+	local changeSet = data.changeSet
+	local marker, createsByPath, operationsById = validateGameChangeSet(changeSet)
+	local currentSnapshot = gameSnapshot(GAME_TEMPLATE_ID)
+	if changeSet.base.studioRevision ~= currentSnapshot.revision then
+		error("Studio changed after Change Preview. Review the starter again before generating.")
+	end
+	for path, expectedHash in pairs(changeSet.base.contentHashes) do
+		if currentSnapshot.contentHashes[path] ~= expectedHash then
+			error("Studio content changed after Change Preview: " .. path)
+		end
+	end
+
+	local selected = {}
+	if data.operationIds == nil then
+		for operationId in pairs(operationsById) do
+			selected[operationId] = true
+		end
+	else
+		assertDenseGameArray(
+			data.operationIds,
+			"Starter-game operation selection",
+			0,
+			MAX_GAME_OPERATIONS
+		)
+		for _, operationId in ipairs(data.operationIds) do
+			if not isGameStableId(operationId)
+				or not operationsById[operationId]
+				or selected[operationId] then
+				error("Unknown or duplicate starter-game operation selection")
+			end
+			selected[operationId] = true
+		end
+	end
+
+	for path, create in pairs(createsByPath) do
+		local existing = getOptionalGameInstance(path)
+		if existing then
+			if existing.ClassName ~= create.className then
+				error("Starter-game name collision: " .. path)
+			end
+			assertGameOwnership(existing, marker)
+			for attribute, expected in pairs(create.attributes) do
+				if existing:GetAttribute(attribute) ~= expected then
+					error("Starter-game owned instance was modified: " .. path .. "." .. attribute)
+				end
+			end
+		elseif not selected[create.operationId] then
+			error("Starter-game resume is missing a required create operation: " .. path)
+		end
+	end
+
+	local rollback = {}
+	local applied = {}
+	local assertions = nil
+	local success, installError = pcall(function()
+		for _, operation in ipairs(changeSet.operations) do
+			if selected[operation.operationId] and operation.type == "create_instance" then
+				local existing = getOptionalGameInstance(operation.targetPath)
+				if not existing then
+					local parent = requireInstanceFromPath(operation.parentPath, "Generated parent")
+					assertUniqueChildName(parent, operation.name)
+					local instance = Instance.new(operation.className)
+					instance.Name = operation.name
+					for attribute, value in pairs(operation.attributes) do
+						instance:SetAttribute(attribute, value)
+					end
+					instance.Parent = parent
+					local rollbackInstance = instance
+					table.insert(rollback, function()
+						if rollbackInstance.Parent then
+							rollbackInstance:Destroy()
+						end
+					end)
+				end
+				table.insert(applied, operation.operationId)
+			end
+		end
+		for _, operation in ipairs(changeSet.operations) do
+			if selected[operation.operationId] and operation.type == "set_property" then
+				local instance = requireInstanceFromPath(operation.targetPath)
+				local propertyName = operation.property
+				local previous = instance[propertyName]
+				local rollbackInstance = instance
+				table.insert(rollback, function()
+					rollbackInstance[propertyName] = previous
+				end)
+				local className = createsByPath[operation.targetPath].className
+				local expectedKind = GAME_CLASS_PROPERTIES[className][propertyName]
+				instance[propertyName] = decodeGameProperty(operation.value, expectedKind)
+				table.insert(applied, operation.operationId)
+			elseif selected[operation.operationId] and operation.type == "set_script_source" then
+				local instance = requireInstanceFromPath(operation.targetPath, "Generated script")
+				local previousSource = readGameScriptSource(instance)
+				if type(previousSource) ~= "string" then
+					error("Generated script source could not be read before installation")
+				end
+				local previousHash = instance:GetAttribute("B9SourceHash")
+				local rollbackInstance = instance
+				table.insert(rollback, function()
+					ScriptEditorService:UpdateSourceAsync(rollbackInstance, function()
+						return previousSource
+					end)
+					rollbackInstance:SetAttribute("B9SourceHash", previousHash)
+				end)
+				local trusted = TRUSTED_GAME_SCRIPTS[operation.assetId]
+				ScriptEditorService:UpdateSourceAsync(instance, function()
+					return trusted.source
+				end)
+				instance:SetAttribute("B9SourceHash", trusted.hash)
+				table.insert(applied, operation.operationId)
+			end
+		end
+		assertions = verifyGameChangeSet(changeSet)
+	end)
+
+	if not success then
+		local cleanupFailures = {}
+		for index = #rollback, 1, -1 do
+			local cleaned, cleanupError = pcall(rollback[index])
+			if not cleaned then
+				table.insert(cleanupFailures, tostring(cleanupError))
+			end
+		end
+		error(
+			"Starter-game install failed: "
+				.. tostring(installError)
+				.. (#cleanupFailures > 0
+					and "; cleanup failures: " .. table.concat(cleanupFailures, "; ")
+					or "")
+		)
+	end
+
+	table.sort(applied)
+	return {
+		status = "installed",
+		generationId = marker.generationId,
+		appliedOperationIds = applied,
+		verifiedAssertionIds = assertions,
+		verified = true,
+		completionLabel = "Ready to playtest",
+		handoff = "playtest-and-fix",
+	}
+end
+
+handlers["/game/verify"] = function(data)
+	local assertions = verifyGameChangeSet(data.changeSet)
+	return { verified = true, verifiedAssertionIds = assertions }
+end
+
+handlers["/game/remove"] = function(data)
+	local changeSet = data.changeSet
+	local marker = validateGameChangeSet(changeSet)
+	local currentSnapshot = gameSnapshot(GAME_TEMPLATE_ID)
+	if changeSet.base.studioRevision ~= currentSnapshot.revision then
+		error("Studio changed after the removal preview. Review the generated game again before removing it.")
+	end
+	for path, expectedHash in pairs(changeSet.base.contentHashes) do
+		if currentSnapshot.contentHashes[path] ~= expectedHash then
+			error("Studio content changed after the removal preview: " .. path)
+		end
+	end
+	local owned = {}
+	for _, path in ipairs(changeSet.ownership.ownedPaths) do
+		owned[path] = true
+	end
+
+	local planned = {}
+	local skipped = {}
+	for _, path in ipairs(changeSet.cleanup.paths) do
+		local instance = getOptionalGameInstance(path)
+		if not instance then
+			table.insert(skipped, path)
+		else
+			assertGameOwnership(instance, marker)
+			local hasUnknownDescendant = false
+			for _, descendant in ipairs(instance:GetDescendants()) do
+				if not owned[getInstancePath(descendant)] then
+					hasUnknownDescendant = true
+					break
+				end
+			end
+			table.insert(planned, {
+				path = path,
+				instance = instance,
+				preserve = hasUnknownDescendant,
+			})
+		end
+	end
+
+	local removed = {}
+	local preserved = {}
+	local failures = {}
+	for _, item in ipairs(planned) do
+		if item.preserve then
+			table.insert(preserved, item.path)
+		else
+			local removedSuccessfully, removeError = pcall(function()
+				item.instance:Destroy()
+			end)
+			if not removedSuccessfully then
+				table.insert(failures, {
+					path = item.path,
+					error = tostring(removeError),
+				})
+			elseif getOptionalGameInstance(item.path) then
+				table.insert(failures, {
+					path = item.path,
+					error = "Path still exists after removal",
+				})
+			else
+				table.insert(removed, item.path)
+			end
+		end
+	end
+	for _, path in ipairs(preserved) do
+		if not getOptionalGameInstance(path) then
+			table.insert(failures, {
+				path = path,
+				error = "Preserved path disappeared during removal",
+			})
+		end
+	end
+
+	table.sort(removed)
+	table.sort(preserved)
+	table.sort(skipped)
+	table.sort(failures, function(left, right)
+		return left.path < right.path
+	end)
+	return {
+		status = #failures == 0 and "removed" or "partial",
+		removed = removed,
+		preserved = preserved,
+		skipped = skipped,
+		failures = failures,
+		generationId = marker.generationId,
+		verified = #failures == 0,
+	}
+end
+
 local function getRelativeInventoryPath(root, instance)
 	local parts = {}
 	local current = instance
@@ -1547,6 +2916,8 @@ local modifyingPaths = {
 	["/instance/bulk-delete"] = true,
 	["/instance/bulk-set"] = true,
 	["/code/run"] = true,
+	["/game/install"] = true,
+	["/game/remove"] = true,
 	["/asset/insert"] = true,
 }
 
@@ -1571,6 +2942,10 @@ local actionNames = {
 	["/instance/search"] = "Search",
 	["/selection/get"] = "Get Selection",
 	["/code/run"] = "Run Code",
+	["/game/snapshot"] = "Inspect Starter Game",
+	["/game/install"] = "Generate Starter Game",
+	["/game/verify"] = "Verify Starter Game",
+	["/game/remove"] = "Remove Generated Game",
 	["/asset/insert"] = "Insert Asset",
 }
 

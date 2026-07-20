@@ -11,7 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 
-const PLAYTEST_FIX_PROMPT = `[Playtest & Fix]
+export const PLAYTEST_FIX_PROMPT = `[Playtest & Fix]
 Inspect the current Roblox Studio playtest state and the recent Studio warnings and errors. Ignore routine bubbertron9001 bridge connection messages. If Studio is running or paused, tell me to press Stop and make no changes. Only diagnose and repair persistent game content while Studio is back in edit mode. If there is no relevant recent runtime evidence, tell me to press Play, reproduce the issue, press Stop, and try Playtest & Fix again. If the logs show a game issue, inspect the relevant scripts, create a plan, fix the root cause, verify the changed scripts with structured Studio readbacks, then tell me to run the playtest again.`;
 
 interface PlaytestFixProps {

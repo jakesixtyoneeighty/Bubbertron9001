@@ -121,12 +121,20 @@ describe("planning tools", () => {
 
     const mutation = useAgentStore
       .getState()
-      .beginStudioOperation("roblox_bulk_create", "mutation");
+      .beginStudioOperation(
+        "roblox_bulk_create",
+        "mutation",
+        ["children:game.Workspace"],
+      );
     expect(mutation).not.toBeNull();
     useAgentStore.getState().completeStudioOperation(mutation!);
     const readback = useAgentStore
       .getState()
-      .beginStudioOperation("roblox_get_children", "readback");
+      .beginStudioOperation(
+        "roblox_get_children",
+        "readback",
+        ["children:game.Workspace"],
+      );
     expect(readback).not.toBeNull();
     useAgentStore.getState().completeStudioOperation(readback!);
     expect(isPlanReadyToFinish()).toBe(true);
@@ -152,7 +160,11 @@ describe("planning tools", () => {
 
     const repairReadback = useAgentStore
       .getState()
-      .beginStudioOperation("roblox_get_children", "readback");
+      .beginStudioOperation(
+        "roblox_get_children",
+        "readback",
+        ["children:game.Workspace"],
+      );
     expect(repairReadback).not.toBeNull();
     useAgentStore.getState().completeStudioOperation(repairReadback!);
     expect(isPlanReadyToFinish()).toBe(true);

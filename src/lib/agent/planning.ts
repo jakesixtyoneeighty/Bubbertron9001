@@ -1,12 +1,31 @@
-import { tool } from "ai";
+import { tool, type ToolExecutionOptions } from "ai";
 import { z } from "zod";
 import {
+  getUnverifiedStudioResourceKeys,
   hasFreshStudioReadback,
+  hasSettledWorkerCrew,
   hasStudioEvidenceAfter,
   useAgentStore,
   type AgentPlanStep,
   type PlanStepStatus,
 } from "@/stores/agent";
+
+function coordinatorRunId(options?: ToolExecutionOptions) {
+  const context = options?.experimental_context;
+  if (!context || typeof context !== "object") {
+    return useAgentStore.getState().runId;
+  }
+  const candidate = context as Record<string, unknown>;
+  if (
+    typeof candidate.ownerId === "string" &&
+    candidate.ownerId !== "coordinator"
+  ) {
+    return null;
+  }
+  return typeof candidate.runId === "string"
+    ? candidate.runId
+    : useAgentStore.getState().runId;
+}
 
 const stepInputSchema = z.object({
   id: z
@@ -74,7 +93,14 @@ Call this first for builds, edits, debugging workflows, or any multi-step task.
 Keep the plan focused: inspect, implement, and verify. Include the Roblox skills
 and tools each step expects to use.`,
   inputSchema: createPlanInputSchema,
-  execute: async ({ goal, summary, steps }) => {
+  execute: async ({ goal, summary, steps }, options) => {
+    const runId = coordinatorRunId(options);
+    if (!runId) {
+      return {
+        error: "Only the coordinator can create the root plan",
+        retryable: false,
+      };
+    }
     const used = new Set<string>();
     const normalized: AgentPlanStep[] = steps.map((step, index) => ({
       id: uniqueStepId(step.id, index, used),
@@ -86,7 +112,15 @@ and tools each step expects to use.`,
       status: "pending",
     }));
 
-    useAgentStore.getState().setPlan({ goal, summary, steps: normalized });
+    const planned = useAgentStore
+      .getState()
+      .setPlan({ goal, summary, steps: normalized }, runId);
+    if (!planned) {
+      return {
+        error: "The plan belongs to a stale or different run",
+        retryable: false,
+      };
+    }
     return {
       planned: true,
       goal,
@@ -110,10 +144,17 @@ verification, or error when it needs a corrected approach.`,
     stepId: string;
     status: PlanStepStatus;
     notes?: string;
-  }) => {
+  }, options?: ToolExecutionOptions) => {
+    const runId = coordinatorRunId(options);
+    if (!runId) {
+      return {
+        error: "Only the coordinator can update the root plan",
+        retryable: false,
+      };
+    }
     const updated = useAgentStore
       .getState()
-      .updateStep(stepId, status, notes);
+      .updateStep(stepId, status, notes, runId);
     if (!updated) {
       return {
         error: `Unknown plan step "${stepId}". Load the current plan and use one of its IDs.`,
@@ -138,7 +179,15 @@ workflow enters repair instead of claiming completion.`,
     summary: string;
     verification: string;
     success: boolean;
-  }) => {
+  }, options?: ToolExecutionOptions) => {
+    const runId = coordinatorRunId(options);
+    if (!runId || runId !== useAgentStore.getState().runId) {
+      return {
+        finished: false,
+        error: "Only the active coordinator can finish the root plan",
+        retryable: false,
+      };
+    }
     if (!success) {
       useAgentStore
         .getState()
@@ -150,7 +199,13 @@ workflow enters repair instead of claiming completion.`,
       };
     }
 
-    const plan = useAgentStore.getState().plan;
+    const { plan, workers, workerMerge } = useAgentStore.getState();
+    if (!hasSettledWorkerCrew(workers, workerMerge)) {
+      const message =
+        "Worker results are not settled. Wait for every worker to finish and merge, dismiss, or surface each result before finishing the plan.";
+      useAgentStore.getState().requestRepair(message);
+      return { finished: false, error: message, retryable: true };
+    }
     const unfinished =
       plan?.steps.filter(
         (step) =>
@@ -187,7 +242,10 @@ workflow enters repair instead of claiming completion.`,
 
     if (!hasFreshStudioReadback(evidence)) {
       const mutation = evidence.lastMutation;
-      const message = `Studio verification is incomplete: ${mutation?.toolName || "a mutation"} succeeded, but no successful Studio readback started after it completed. Run a relevant structured readback such as roblox_get_script, roblox_get_children, roblox_get_properties, roblox_search, roblox_get_selection, or roblox_get_playtest_state, then retry agent_finish_plan. Recent logs are diagnostic context and cannot verify a mutation by themselves.`;
+      const unverifiedResources = getUnverifiedStudioResourceKeys(evidence);
+      const targetSummary = unverifiedResources.slice(0, 6).join(", ");
+      const remaining = Math.max(0, unverifiedResources.length - 6);
+      const message = `Studio verification is incomplete: ${mutation?.toolName || "a mutation"} succeeded, but later coordinator readbacks do not cover every changed resource (${targetSummary}${remaining > 0 ? `, plus ${remaining} more` : ""}). Run the matching structured readback for each target, then retry agent_finish_plan. Readbacks of unrelated Studio resources and recent logs cannot verify a mutation.`;
       useAgentStore.getState().requestRepair(message);
       return {
         finished: false,

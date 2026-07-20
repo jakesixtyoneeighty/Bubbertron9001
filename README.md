@@ -299,11 +299,14 @@ bubbertron9001/
 - [x] **@ Mentions** - Reference instances with `@game.Workspace.Part`
 - [x] **Playtest & Fix** - Inspect runtime state and bounded Studio Output diagnostics
 - [x] **Guided Mac Setup** - Install and connect through clickable first-run steps
-- [ ] **Signed Releases & Updates** - Notarized universal Mac builds with automatic updates
-- [ ] **Change Preview** - Approve a script diff before it is applied
-- [ ] **One-Click Games** - Templates for Obby, Tycoon, FPS, etc.
+- [ ] **Change Preview** - Review scripts, instances, conflicts, and risk before applying a change set
+- [ ] **One-Click Starter Games** - Curated, versioned Obby/Tycoon/FPS starters with preview, verified installation, and recovery
+- [ ] **Sub-Agents** - Bounded parallel research and inspection workers with coordinator-owned Studio writes
 - [ ] **Cloud Operations** - Authenticated DataStore and publishing workflows
-- [ ] **Sub-Agents** - Parallel AI workers for complex tasks
+- [ ] **Signed Releases & Updates** - Notarized universal Mac builds with automatic updates
+
+Planning for One-Click Starter Games and Sub-Agents is detailed in
+[`docs/SUBAGENTS_AND_ONE_CLICK_GAMES.md`](docs/SUBAGENTS_AND_ONE_CLICK_GAMES.md).
 
 ## Contributing
 

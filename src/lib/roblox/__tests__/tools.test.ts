@@ -39,11 +39,18 @@ function executeDelete(path: string) {
   return candidate.execute({ path })
 }
 
-function executeTool(toolDefinition: unknown, input: Record<string, unknown>) {
+function executeTool(
+  toolDefinition: unknown,
+  input: Record<string, unknown>,
+  options?: Record<string, unknown>,
+) {
   const candidate = toolDefinition as {
-    execute: (value: Record<string, unknown>) => Promise<unknown>
+    execute: (
+      value: Record<string, unknown>,
+      options?: Record<string, unknown>,
+    ) => Promise<unknown>
   }
-  return candidate.execute(input)
+  return candidate.execute(input, options)
 }
 
 function parseToolInput(toolDefinition: unknown, input: unknown) {
@@ -96,7 +103,8 @@ describe("playtest diagnostic readbacks", () => {
     expect(studioRequest).toHaveBeenCalledWith(
       "/playtest/state",
       undefined,
-      undefined
+      undefined,
+      {},
     )
     expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(1)
   })
@@ -150,7 +158,8 @@ describe("playtest diagnostic readbacks", () => {
     expect(studioRequest).toHaveBeenCalledWith(
       "/playtest/logs",
       { limit: 25, levels: ["warning", "error"] },
-      undefined
+      undefined,
+      {},
     )
     expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(0)
   })
@@ -414,6 +423,121 @@ describe("deterministic Studio verification evidence", () => {
     expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(1)
   })
 
+  it("does not let an unrelated coordinator readback verify a mutation", async () => {
+    vi.mocked(studioRequest)
+      .mockResolvedValueOnce({
+        success: true,
+        data: { path: "game.Workspace.PartA" },
+      })
+      .mockResolvedValueOnce({ success: true, data: [] })
+      .mockResolvedValueOnce({ success: true, data: [] })
+
+    await createCompletedBuildPlan()
+    await executeTool(robloxTools.roblox_set_property, {
+      path: "game.Workspace.PartA",
+      property: "Anchored",
+      value: "true",
+    })
+    await executeTool(robloxTools.roblox_get_properties, {
+      path: "game.Workspace.PartB",
+    })
+
+    await expect(finishBuildPlan()).resolves.toMatchObject({
+      finished: false,
+      retryable: true,
+    })
+    expect(useAgentStore.getState().lastError).toContain(
+      "properties:game.Workspace.PartA",
+    )
+
+    await executeTool(robloxTools.roblox_get_properties, {
+      path: "game.Workspace.PartA",
+    })
+    await expect(finishBuildPlan()).resolves.toMatchObject({ finished: true })
+  })
+
+  it("does not let a worker readback verify the coordinator's mutation", async () => {
+    vi.mocked(studioRequest)
+      .mockResolvedValueOnce({
+        success: true,
+        data: { path: "game.Workspace.VerifiedPart" },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: [
+          {
+            path: "game.Workspace.VerifiedPart",
+            name: "VerifiedPart",
+            className: "Part",
+          },
+        ],
+      })
+
+    await createCompletedBuildPlan()
+    await executeTool(robloxTools.roblox_create, {
+      className: "Part",
+      parent: "game.Workspace",
+      name: "VerifiedPart",
+    })
+    const runId = useAgentStore.getState().runId
+    await executeTool(
+      robloxTools.roblox_get_children,
+      { path: "game.Workspace" },
+      {
+        experimental_context: {
+          runId,
+          ownerId: "explorer",
+          stepId: "build",
+        },
+      },
+    )
+
+    await expect(finishBuildPlan()).resolves.toMatchObject({
+      finished: false,
+      retryable: true,
+    })
+    expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(0)
+  })
+
+  it("rejects stale operations and worker mutation attempts before Studio", async () => {
+    await expect(
+      executeTool(
+        robloxTools.roblox_get_children,
+        { path: "game.Workspace" },
+        {
+          experimental_context: {
+            runId: "run_stale",
+            ownerId: "coordinator",
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      error: "This Studio operation belongs to a stale or different run",
+      retryable: false,
+    })
+
+    await expect(
+      executeTool(
+        robloxTools.roblox_create,
+        {
+          className: "Part",
+          parent: "game.Workspace",
+          name: "ForbiddenWorkerPart",
+        },
+        {
+          experimental_context: {
+            runId: useAgentStore.getState().runId,
+            ownerId: "explorer",
+          },
+        },
+      ),
+    ).resolves.toMatchObject({
+      error: "Only the coordinator can change Roblox Studio",
+      retryable: false,
+    })
+    expect(studioRequest).not.toHaveBeenCalled()
+  })
+
   it("does not allow recent logs alone to verify a mutation", async () => {
     vi.mocked(studioRequest)
       .mockResolvedValueOnce({
@@ -460,6 +584,8 @@ describe("deterministic Studio verification evidence", () => {
       .mockResolvedValueOnce({
         success: false,
         error: "Studio read failed",
+        operationId: "operation-read-failed",
+        operationStatus: null,
       })
 
     await createCompletedBuildPlan()
@@ -640,7 +766,8 @@ describe("Creator Store tool safety metadata", () => {
     expect(studioRequest).toHaveBeenCalledWith(
       "/asset/insert",
       { assetId: 9001, parent: "game.Workspace" },
-      undefined
+      undefined,
+      {},
     )
   })
 

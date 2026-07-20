@@ -4,13 +4,29 @@ import { getValidAccessToken, getStoredAuth } from "@/lib/auth/codex";
 import { robloxTools } from "@/lib/roblox";
 import { skillTools } from "@/lib/skills";
 import {
+  createWorkerToolset,
+  clearDelegationCrew,
+  delegationTools,
   hasActivePlan,
   hasRunningPlan,
   isPlanReadyToFinish,
   planningTools,
+  registerWorkerExecutor,
+  type WorkerAssignment,
+  type WorkerExecutionContext,
+  type WorkerExecutor,
 } from "@/lib/agent";
 import { errorMessage, getToolError } from "./errors";
 import { ROBLOX_SYSTEM_PROMPT } from "./system-prompt";
+import {
+  buildWorkerSystemPrompt,
+  workerOutputSchema,
+  workerResultFromOutput,
+} from "./worker-runtime";
+import {
+  WorkerToolCallBudget,
+  executeCodexWorkerToolCallBatch,
+} from "./worker-tool-budget";
 import type {
   ChatCallbacks,
   ChatRunOptions,
@@ -27,6 +43,7 @@ const agentTools = {
   ...robloxTools,
   ...skillTools,
   ...planningTools,
+  ...delegationTools,
 };
 export const CODEX_WORKING_TOOL_NAMES = Object.keys(agentTools).filter(
   (name) => name !== "agent_finish_plan"
@@ -38,6 +55,7 @@ export interface CodexMessage {
 }
 
 export interface CodexChatCallbacks extends ChatCallbacks, ChatRunOptions {
+  runId?: string;
   planningRequired?: boolean;
 }
 
@@ -94,16 +112,24 @@ export const CODEX_FORCED_WEB_SEARCH_CHOICE = {
   tools: [{ type: "web_search" }],
 } as const satisfies CodexToolChoice;
 
+type ExecutableToolMap = Record<
+  string,
+  {
+    description?: string;
+    inputSchema?: z.ZodType;
+    execute?: (
+      input: unknown,
+      options?: Record<string, unknown>,
+    ) => Promise<unknown>;
+  }
+>;
+
 function convertToolsToOpenAI(
-  names: ReadonlyArray<keyof typeof agentTools> = Object.keys(
-    agentTools
-  ) as Array<keyof typeof agentTools>
+  toolset: ExecutableToolMap,
+  names: ReadonlyArray<string> = Object.keys(toolset),
 ) {
   return names.flatMap((name): FunctionToolDefinition[] => {
-    const candidate = agentTools[name] as unknown as {
-      description?: string;
-      inputSchema?: z.ZodType;
-    };
+    const candidate = toolset[name];
     if (!candidate.inputSchema) return [];
 
     return [
@@ -155,9 +181,11 @@ function validationIssues(error: z.ZodError) {
 
 async function executeTool(
   toolCall: ToolCall,
-  signal?: AbortSignal
+  signal: AbortSignal | undefined,
+  toolset: ExecutableToolMap = agentTools as unknown as ExecutableToolMap,
+  executionContext?: Record<string, unknown>,
 ): Promise<unknown> {
-  const candidate = agentTools[toolCall.name as keyof typeof agentTools] as
+  const candidate = toolset[toolCall.name] as
     | {
         inputSchema?: {
           safeParse: (
@@ -208,6 +236,7 @@ async function executeTool(
     return await candidate.execute(validation.data, {
       toolCallId: toolCall.id,
       abortSignal: signal,
+      experimental_context: executionContext,
     });
   } catch (error) {
     return {
@@ -318,7 +347,11 @@ async function makeCodexRequest(
   input: InputItem[],
   tools: CodexToolDefinition[],
   toolChoice: CodexToolChoice,
-  callbacks: CodexChatCallbacks
+  callbacks: Pick<
+    CodexChatCallbacks,
+    "signal" | "onToken" | "onToolCall" | "onToolResult" | "onSource"
+  >,
+  instructions = ROBLOX_SYSTEM_PROMPT,
 ): Promise<{
   text: string;
   toolCalls: ToolCall[];
@@ -341,7 +374,7 @@ async function makeCodexRequest(
   const response = await requestWithRetry(
     {
       model,
-      instructions: ROBLOX_SYSTEM_PROMPT,
+      instructions,
       input,
       tools,
       tool_choice: toolChoice,
@@ -506,6 +539,144 @@ async function makeCodexRequest(
   return { text, toolCalls, webSearchUsed };
 }
 
+function parseWorkerOutput(text: string) {
+  const unfenced = text
+    .trim()
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/, "");
+  const start = unfenced.indexOf("{");
+  const end = unfenced.lastIndexOf("}");
+  if (start === -1 || end < start) {
+    throw new Error("Worker did not return a JSON result");
+  }
+  return workerOutputSchema.parse(
+    JSON.parse(unfenced.slice(start, end + 1)),
+  );
+}
+
+function createCodexWorkerExecutor(model: string): WorkerExecutor {
+  return async (
+    assignment: WorkerAssignment,
+    context: WorkerExecutionContext,
+  ) => {
+    const availableTools = {
+      ...robloxTools,
+      ...skillTools,
+    } as unknown as ExecutableToolMap;
+    const workerTools = createWorkerToolset(
+      assignment.role,
+      availableTools,
+    ) as ExecutableToolMap;
+    const functionTools = convertToolsToOpenAI(workerTools);
+    const toolDefinitions: CodexToolDefinition[] =
+      assignment.role === "roblox_researcher"
+        ? [...functionTools, webSearchTool(false)]
+        : functionTools;
+    const history: InputItem[] = [
+      {
+        role: "user",
+        content: [
+          {
+            type: "input_text",
+            text: `${assignment.task}\n\nReturn only JSON matching this schema:\n${JSON.stringify(
+              z.toJSONSchema(workerOutputSchema),
+            )}`,
+          },
+        ],
+      },
+    ];
+    const executionContext = {
+      runId: context.runId,
+      ownerId: context.agentId,
+      stepId: context.stepId,
+    };
+    let lastParseError = "";
+    const toolCallBudget = new WorkerToolCallBudget(
+      context.limits.maxStepsPerWorker,
+    );
+
+    const providerCallLimit = Math.min(
+      context.limits.maxStepsPerWorker,
+      context.limits.maxProviderCallsPerWorker,
+    );
+    for (
+      let iteration = 0;
+      iteration < providerCallLimit;
+      iteration += 1
+    ) {
+      if (context.signal.aborted) {
+        throw new DOMException("Worker cancelled", "AbortError");
+      }
+      const result = await makeCodexRequest(
+        model,
+        history,
+        toolDefinitions,
+        "auto",
+        { signal: context.signal },
+        buildWorkerSystemPrompt(assignment, context),
+      );
+
+      if (result.text) {
+        history.push({
+          role: "assistant",
+          content: [{ type: "output_text", text: result.text }],
+        });
+      }
+
+      if (result.toolCalls.length === 0) {
+        try {
+          return workerResultFromOutput(
+            assignment,
+            parseWorkerOutput(result.text),
+          );
+        } catch (error) {
+          lastParseError = errorMessage(error);
+          history.push({
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: `Your result was invalid (${lastParseError}). Return only a complete JSON object matching the requested schema.`,
+              },
+            ],
+          });
+          continue;
+        }
+      }
+
+      await executeCodexWorkerToolCallBatch(
+        result.toolCalls,
+        toolCallBudget,
+        async (toolCall) => {
+          history.push({
+            type: "function_call",
+            call_id: toolCall.id,
+            name: toolCall.name,
+            arguments: toolCall.arguments,
+          });
+          const output = await executeTool(
+            toolCall,
+            context.signal,
+            workerTools,
+            executionContext,
+          );
+          history.push({
+            type: "function_call_output",
+            call_id: toolCall.id,
+            output: JSON.stringify(output),
+          });
+        },
+        context.signal,
+      );
+    }
+
+    throw new Error(
+      lastParseError ||
+        `Worker stopped after ${providerCallLimit} bounded provider calls`,
+    );
+  };
+}
+
 export async function codexChat(
   model: string,
   messages: CodexMessage[],
@@ -513,11 +684,18 @@ export async function codexChat(
 ): Promise<string> {
   const conversationHistory = convertToCodexInput(messages);
   const workingFunctionTools = convertToolsToOpenAI(
-    CODEX_WORKING_TOOL_NAMES
+    agentTools as unknown as ExecutableToolMap,
+    CODEX_WORKING_TOOL_NAMES,
   );
   let fullText = "";
   let webSearchUsed = false;
   let planContinuationAttempts = 0;
+  const unregisterWorkerExecutor = callbacks.runId
+    ? registerWorkerExecutor(
+        callbacks.runId,
+        createCodexWorkerExecutor(model),
+      )
+    : undefined;
 
   try {
     for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
@@ -526,15 +704,21 @@ export async function codexChat(
       }
 
       const needsPlan =
-        callbacks.planningRequired === true && !hasActivePlan();
+        callbacks.planningRequired === true && !hasActivePlan(callbacks.runId);
       const needsForcedSearch =
         callbacks.forceWebSearch === true && !webSearchUsed;
-      const needsFinish = isPlanReadyToFinish();
-      const planStillRunning = hasRunningPlan();
+      const needsFinish = isPlanReadyToFinish(callbacks.runId);
+      const planStillRunning = hasRunningPlan(callbacks.runId);
       const tools: CodexToolDefinition[] = needsPlan
-        ? convertToolsToOpenAI(["agent_create_plan"])
+        ? convertToolsToOpenAI(
+            agentTools as unknown as ExecutableToolMap,
+            ["agent_create_plan"],
+          )
         : needsFinish && !needsForcedSearch
-          ? convertToolsToOpenAI(["agent_finish_plan"])
+          ? convertToolsToOpenAI(
+              agentTools as unknown as ExecutableToolMap,
+              ["agent_finish_plan"],
+            )
           : [
               ...workingFunctionTools,
               webSearchTool(callbacks.officialDocsOnly === true),
@@ -565,7 +749,7 @@ export async function codexChat(
       }
 
       if (result.toolCalls.length === 0) {
-        if (hasRunningPlan()) {
+        if (hasRunningPlan(callbacks.runId)) {
           planContinuationAttempts += 1;
           if (planContinuationAttempts > 2) {
             throw new Error(
@@ -612,7 +796,12 @@ export async function codexChat(
           input: displayInput,
         });
 
-        const output = await executeTool(toolCall, callbacks.signal);
+        const output = await executeTool(
+          toolCall,
+          callbacks.signal,
+          agentTools as unknown as ExecutableToolMap,
+          { runId: callbacks.runId, ownerId: "coordinator" },
+        );
         const failure = getToolError(output);
         if (failure) {
           callbacks.onToolError?.({
@@ -645,5 +834,8 @@ export async function codexChat(
       error instanceof Error ? error : new Error(errorMessage(error));
     callbacks.onError?.(normalized);
     throw normalized;
+  } finally {
+    if (callbacks.runId) clearDelegationCrew(callbacks.runId);
+    unregisterWorkerExecutor?.();
   }
 }

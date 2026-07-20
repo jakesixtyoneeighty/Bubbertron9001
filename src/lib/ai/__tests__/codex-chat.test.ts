@@ -16,6 +16,8 @@ describe("Codex Responses contract", () => {
   it("withholds finish from normal execution and repair turns", () => {
     expect(CODEX_WORKING_TOOL_NAMES).toContain("roblox_get_script")
     expect(CODEX_WORKING_TOOL_NAMES).toContain("agent_update_plan")
+    expect(CODEX_WORKING_TOOL_NAMES).toContain("agent_delegate")
+    expect(CODEX_WORKING_TOOL_NAMES).toContain("agent_manage_workers")
     expect(CODEX_WORKING_TOOL_NAMES).not.toContain("agent_finish_plan")
   })
 })

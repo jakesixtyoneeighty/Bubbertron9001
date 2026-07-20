@@ -1,5 +1,6 @@
 import {
   hasFreshStudioReadback,
+  hasSettledWorkerCrew,
   hasStudioEvidenceAfter,
   useAgentStore,
 } from "@/stores/agent";
@@ -21,17 +22,18 @@ export function beginAgentRun(
   message: string,
   planningRequired = shouldCreatePlan(message)
 ) {
-  useAgentStore.getState().beginRun(message, planningRequired);
-  return planningRequired;
+  return useAgentStore.getState().beginRun(message, planningRequired);
 }
 
-export function hasActivePlan() {
-  return useAgentStore.getState().plan !== null;
+export function hasActivePlan(expectedRunId?: string) {
+  const { runId, plan } = useAgentStore.getState();
+  return (!expectedRunId || runId === expectedRunId) && plan !== null;
 }
 
-export function hasRunningPlan() {
-  const { plan, phase } = useAgentStore.getState();
+export function hasRunningPlan(expectedRunId?: string) {
+  const { runId, plan, phase } = useAgentStore.getState();
   return (
+    (!expectedRunId || runId === expectedRunId) &&
     plan !== null &&
     phase !== "completed" &&
     phase !== "error" &&
@@ -39,18 +41,23 @@ export function hasRunningPlan() {
   );
 }
 
-export function isPlanReadyToFinish() {
+export function isPlanReadyToFinish(expectedRunId?: string) {
   const {
+    runId,
     plan,
     phase,
     studioEvidence,
     repairEvidenceAfterOrder,
+    workers,
+    workerMerge,
   } = useAgentStore.getState();
   return (
+    (!expectedRunId || runId === expectedRunId) &&
     plan !== null &&
     phase !== "completed" &&
     phase !== "error" &&
     phase !== "cancelled" &&
+    hasSettledWorkerCrew(workers, workerMerge) &&
     hasStudioEvidenceAfter(studioEvidence, repairEvidenceAfterOrder) &&
     hasFreshStudioReadback(studioEvidence) &&
     plan.steps.every(

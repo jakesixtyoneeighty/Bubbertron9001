@@ -26,13 +26,19 @@ const MAX_OAUTH_CODE_BYTES: usize = 16 * 1024;
 const MAX_OAUTH_STATE_BYTES: usize = 1024;
 const STUDIO_SESSION_TIMEOUT_SECS: u64 = 20;
 const REQUEST_TIMEOUT_SECS: u64 = 15;
+// Leave a small server-side margin beyond the desktop client's 60-second cap
+// so its cancellation request wins the timeout race and the operation remains
+// queryable if Studio reports a late completion.
+const GAME_INSTALL_TIMEOUT_SECS: u64 = 65;
 const MAX_PENDING_REQUESTS: usize = 64;
 const MAX_BRIDGE_REQUEST_BYTES: u64 = 2 * 1024 * 1024;
 const MAX_BRIDGE_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_SESSION_CONTROL_BYTES: u64 = 4 * 1024;
 const MAX_REQUEST_PATH_BYTES: usize = 256;
 const MAX_REQUEST_ID_BYTES: usize = 128;
+const MAX_OPERATION_ID_BYTES: usize = 128;
 const MAX_SESSION_ID_BYTES: usize = 128;
+const MAX_OPERATION_HISTORY: usize = 256;
 const PAIRING_SECRET_HEADER: &str = "x-bubbertron9001-secret";
 const PREVIOUS_PAIRING_SECRET_HEADER: &str = "x-bubberton9001-secret";
 
@@ -52,6 +58,18 @@ pub struct OAuthCallbackData {
 pub struct StudioRequest {
     pub path: String,
     pub body: Option<String>,
+    #[serde(default)]
+    pub operation_id: Option<String>,
+    #[serde(default)]
+    pub run_id: Option<String>,
+    #[serde(default)]
+    pub owner_id: Option<String>,
+    #[serde(default)]
+    pub step_id: Option<String>,
+    #[serde(default)]
+    pub capability: Option<String>,
+    #[serde(default)]
+    pub target: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -79,6 +97,11 @@ pub struct SessionRequest {
     pub session_id: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct OperationRequest {
+    pub operation_id: String,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct RespondRequest {
     pub id: String,
@@ -95,9 +118,38 @@ pub struct StatusResponse {
 
 struct PendingRequest {
     request: StudioRequest,
+    operation_id: String,
     sender: oneshot::Sender<StudioResponse>,
     timestamp: Instant,
     leased_session_id: Option<String>,
+    cancel_requested: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum OperationStatus {
+    Queued,
+    Leased,
+    Completed,
+    Failed,
+    CancelRequested,
+    Cancelled,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct OperationRecord {
+    operation_id: String,
+    request_id: String,
+    status: OperationStatus,
+    leased: bool,
+    may_complete: bool,
+    completed_after_cancel: bool,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum EnqueueError {
+    QueueFull,
+    DuplicateOperation,
 }
 
 struct ActiveStudioSession {
@@ -115,6 +167,8 @@ enum CompleteRequestError {
 struct BridgeState {
     pending_requests: HashMap<String, PendingRequest>,
     request_queue: VecDeque<String>,
+    operation_records: HashMap<String, OperationRecord>,
+    operation_order: VecDeque<String>,
     active_session: Option<ActiveStudioSession>,
 }
 
@@ -123,6 +177,8 @@ impl BridgeState {
         Self {
             pending_requests: HashMap::new(),
             request_queue: VecDeque::new(),
+            operation_records: HashMap::new(),
+            operation_order: VecDeque::new(),
             active_session: None,
         }
     }
@@ -183,26 +239,44 @@ impl BridgeState {
 
     fn enqueue(
         &mut self,
-        request: StudioRequest,
+        mut request: StudioRequest,
         sender: oneshot::Sender<StudioResponse>,
-    ) -> Option<String> {
+    ) -> Result<String, EnqueueError> {
         self.cleanup_stale();
         if self.pending_requests.len() >= MAX_PENDING_REQUESTS {
-            return None;
+            return Err(EnqueueError::QueueFull);
         }
 
+        let operation_id = request
+            .operation_id
+            .clone()
+            .unwrap_or_else(|| format!("op_{}", uuid::Uuid::new_v4()));
+        if self.operation_records.contains_key(&operation_id) {
+            return Err(EnqueueError::DuplicateOperation);
+        }
+        request.operation_id = Some(operation_id.clone());
         let id = format!("req_{}", uuid::Uuid::new_v4());
         self.pending_requests.insert(
             id.clone(),
             PendingRequest {
                 request,
+                operation_id: operation_id.clone(),
                 sender,
                 timestamp: Instant::now(),
                 leased_session_id: None,
+                cancel_requested: false,
             },
         );
+        self.record_operation(OperationRecord {
+            operation_id,
+            request_id: id.clone(),
+            status: OperationStatus::Queued,
+            leased: false,
+            may_complete: false,
+            completed_after_cancel: false,
+        });
         self.request_queue.push_back(id.clone());
-        Some(id)
+        Ok(id)
     }
 
     /// Lease each request at most once. A missing response is allowed to time out rather
@@ -214,6 +288,10 @@ impl BridgeState {
             if let Some(pending) = self.pending_requests.get_mut(&id) {
                 if pending.leased_session_id.is_none() {
                     pending.leased_session_id = Some(session_id.to_string());
+                    if let Some(record) = self.operation_records.get_mut(&pending.operation_id) {
+                        record.status = OperationStatus::Leased;
+                        record.leased = true;
+                    }
                     return Some((id, pending.request.clone()));
                 }
             }
@@ -226,6 +304,7 @@ impl BridgeState {
         &mut self,
         request_id: &str,
         session_id: &str,
+        response_status: u16,
     ) -> Result<PendingRequest, CompleteRequestError> {
         let pending = self
             .pending_requests
@@ -240,19 +319,152 @@ impl BridgeState {
             Some(_) => {}
         }
 
-        self.pending_requests
+        let completed = self
+            .pending_requests
             .remove(request_id)
-            .ok_or(CompleteRequestError::NotFound)
+            .ok_or(CompleteRequestError::NotFound)?;
+        if let Some(record) = self.operation_records.get_mut(&completed.operation_id) {
+            record.status = if (200..=299).contains(&response_status) {
+                OperationStatus::Completed
+            } else {
+                OperationStatus::Failed
+            };
+            record.completed_after_cancel = completed.cancel_requested;
+            record.may_complete = false;
+        }
+        Ok(completed)
+    }
+
+    fn cancel_operation(&mut self, operation_id: &str) -> OperationRecord {
+        self.cleanup_stale();
+        let record = self
+            .operation_records
+            .get(operation_id)
+            .cloned()
+            .unwrap_or_else(|| {
+                let record = OperationRecord {
+                    operation_id: operation_id.to_string(),
+                    request_id: String::new(),
+                    status: OperationStatus::Cancelled,
+                    leased: false,
+                    may_complete: false,
+                    completed_after_cancel: false,
+                };
+                self.record_operation(record.clone());
+                record
+            });
+
+        let pending_id = self
+            .pending_requests
+            .iter()
+            .find_map(|(id, pending)| (pending.operation_id == operation_id).then(|| id.clone()));
+
+        let Some(pending_id) = pending_id else {
+            return record;
+        };
+        let leased = self
+            .pending_requests
+            .get(&pending_id)
+            .is_some_and(|pending| pending.leased_session_id.is_some());
+
+        if leased {
+            if let Some(pending) = self.pending_requests.get_mut(&pending_id) {
+                pending.cancel_requested = true;
+                pending.timestamp = Instant::now();
+            }
+            if let Some(record) = self.operation_records.get_mut(operation_id) {
+                record.status = OperationStatus::CancelRequested;
+                record.leased = true;
+                record.may_complete = true;
+                return record.clone();
+            }
+        } else {
+            self.pending_requests.remove(&pending_id);
+            self.request_queue.retain(|id| id != &pending_id);
+            if let Some(record) = self.operation_records.get_mut(operation_id) {
+                record.status = OperationStatus::Cancelled;
+                record.may_complete = false;
+                return record.clone();
+            }
+        }
+
+        record
+    }
+
+    fn record_operation(&mut self, record: OperationRecord) {
+        let operation_id = record.operation_id.clone();
+        self.operation_records.insert(operation_id.clone(), record);
+        self.operation_order.push_back(operation_id);
+        while self.operation_order.len() > MAX_OPERATION_HISTORY {
+            let removable_index = self.operation_order.iter().position(|candidate| {
+                !self
+                    .pending_requests
+                    .values()
+                    .any(|pending| pending.operation_id == *candidate)
+            });
+            let Some(removable_index) = removable_index else {
+                break;
+            };
+            if let Some(expired) = self.operation_order.remove(removable_index) {
+                self.operation_records.remove(&expired);
+            }
+        }
+    }
+
+    fn fail_request(&mut self, request_id: &str) {
+        if let Some(pending) = self.pending_requests.remove(request_id) {
+            if let Some(record) = self.operation_records.get_mut(&pending.operation_id) {
+                record.status = if pending.cancel_requested {
+                    OperationStatus::Cancelled
+                } else {
+                    OperationStatus::Failed
+                };
+                record.may_complete = false;
+            }
+        }
+        self.request_queue.retain(|id| id != request_id);
+    }
+
+    fn timeout_request(&mut self, request_id: &str) {
+        let Some(pending) = self.pending_requests.get_mut(request_id) else {
+            return;
+        };
+        if pending.leased_session_id.is_none() {
+            self.fail_request(request_id);
+            return;
+        }
+
+        pending.cancel_requested = true;
+        pending.timestamp = Instant::now();
+        if let Some(record) = self.operation_records.get_mut(&pending.operation_id) {
+            record.status = OperationStatus::CancelRequested;
+            record.leased = true;
+            record.may_complete = true;
+        }
     }
 
     fn cleanup_stale(&mut self) {
         self.expire_active_session();
-        let timeout = Duration::from_secs(REQUEST_TIMEOUT_SECS);
-        self.pending_requests
-            .retain(|_, pending| pending.timestamp.elapsed() <= timeout);
-        self.request_queue
-            .retain(|id| self.pending_requests.contains_key(id));
+        let stale = self
+            .pending_requests
+            .iter()
+            .filter(|(_, pending)| {
+                pending.timestamp.elapsed() > request_timeout(&pending.request.path)
+            })
+            .map(|(id, _)| id.clone())
+            .collect::<Vec<_>>();
+        for id in stale {
+            self.fail_request(&id);
+        }
     }
+}
+
+fn request_timeout(path: &str) -> Duration {
+    Duration::from_secs(if path == "/game/install" {
+        GAME_INSTALL_TIMEOUT_SECS
+    } else {
+        REQUEST_TIMEOUT_SECS
+    })
 }
 
 fn chrono_lite_timestamp() -> u64 {
@@ -279,6 +491,29 @@ fn valid_session_id(session_id: &str) -> bool {
         && session_id
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+}
+
+fn valid_context_id(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= MAX_OPERATION_ID_BYTES
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':'))
+}
+
+fn valid_request_context(request: &StudioRequest) -> bool {
+    request.operation_id.as_deref().is_none_or(valid_context_id)
+        && request.run_id.as_deref().is_none_or(valid_context_id)
+        && request.owner_id.as_deref().is_none_or(valid_context_id)
+        && request.step_id.as_deref().is_none_or(valid_context_id)
+        && request
+            .capability
+            .as_deref()
+            .is_none_or(|value| matches!(value, "read" | "mutation" | "template_install"))
+        && request
+            .target
+            .as_deref()
+            .is_none_or(|value| !value.is_empty() && value.len() <= 512)
 }
 
 fn pairing_secret_matches(provided: Option<&str>) -> bool {
@@ -507,7 +742,7 @@ pub async fn start_bridge_server() {
 
             let mut state = state.lock();
 
-            match state.complete_request(&body.id, &body.session_id) {
+            match state.complete_request(&body.id, &body.session_id, body.response.status) {
                 Ok(pending) => {
                     let _ = pending.sender.send(body.response);
                     warp::reply::with_status(
@@ -530,6 +765,81 @@ pub async fn start_bridge_server() {
                     warp::http::StatusCode::CONFLICT,
                 ),
             }
+            },
+        );
+
+    let cancel_operation = bridge_namespace()
+        .and(warp::path("operation"))
+        .and(warp::path("cancel"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(pairing_secret_header())
+        .and(warp::body::content_length_limit(MAX_SESSION_CONTROL_BYTES))
+        .and(warp::body::json())
+        .and(with_state(state.clone()))
+        .map(
+            |provided_secret: Option<String>, body: OperationRequest, state: SharedState| {
+                if !pairing_secret_matches(provided_secret.as_deref()) {
+                    return warp::reply::with_status(
+                        warp::reply::json(
+                            &serde_json::json!({"error": "Bridge authentication failed"}),
+                        ),
+                        warp::http::StatusCode::UNAUTHORIZED,
+                    );
+                }
+                if !valid_context_id(&body.operation_id) {
+                    return warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({"error": "Invalid operation ID"})),
+                        warp::http::StatusCode::BAD_REQUEST,
+                    );
+                }
+
+                let record = state.lock().cancel_operation(&body.operation_id);
+                warp::reply::with_status(warp::reply::json(&record), warp::http::StatusCode::OK)
+            },
+        );
+
+    let operation_status = bridge_namespace()
+        .and(warp::path("operation"))
+        .and(warp::path("status"))
+        .and(warp::path::end())
+        .and(warp::post())
+        .and(pairing_secret_header())
+        .and(warp::body::content_length_limit(MAX_SESSION_CONTROL_BYTES))
+        .and(warp::body::json())
+        .and(with_state(state.clone()))
+        .map(
+            |provided_secret: Option<String>, body: OperationRequest, state: SharedState| {
+                if !pairing_secret_matches(provided_secret.as_deref()) {
+                    return warp::reply::with_status(
+                        warp::reply::json(
+                            &serde_json::json!({"error": "Bridge authentication failed"}),
+                        ),
+                        warp::http::StatusCode::UNAUTHORIZED,
+                    );
+                }
+                if !valid_context_id(&body.operation_id) {
+                    return warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({"error": "Invalid operation ID"})),
+                        warp::http::StatusCode::BAD_REQUEST,
+                    );
+                }
+
+                let record = state
+                    .lock()
+                    .operation_records
+                    .get(&body.operation_id)
+                    .cloned();
+                match record {
+                    Some(record) => warp::reply::with_status(
+                        warp::reply::json(&record),
+                        warp::http::StatusCode::OK,
+                    ),
+                    None => warp::reply::with_status(
+                        warp::reply::json(&serde_json::json!({"error": "Operation not found"})),
+                        warp::http::StatusCode::NOT_FOUND,
+                    ),
+                }
             },
         );
 
@@ -572,6 +882,8 @@ pub async fn start_bridge_server() {
         .or(request)
         .or(poll)
         .or(respond)
+        .or(cancel_operation)
+        .or(operation_status)
         .or(disconnect)
         .with(cors());
 
@@ -627,6 +939,7 @@ async fn handle_request(
     if body.path.is_empty()
         || !body.path.starts_with('/')
         || body.path.len() > MAX_REQUEST_PATH_BYTES
+        || !valid_request_context(&body)
     {
         return Ok(warp::reply::with_status(
             warp::reply::json(&serde_json::json!({"error": "Invalid request path"})),
@@ -634,13 +947,14 @@ async fn handle_request(
         ));
     }
 
+    let wait_timeout = request_timeout(&body.path);
     let (sender, receiver) = oneshot::channel();
 
     let id = {
         let mut state = state.lock();
         match state.enqueue(body, sender) {
-            Some(id) => id,
-            None => {
+            Ok(id) => id,
+            Err(EnqueueError::QueueFull) => {
                 return Ok(warp::reply::with_status(
                     warp::reply::json(
                         &serde_json::json!({"error": "Studio request queue is full"}),
@@ -648,11 +962,19 @@ async fn handle_request(
                     warp::http::StatusCode::TOO_MANY_REQUESTS,
                 ));
             }
+            Err(EnqueueError::DuplicateOperation) => {
+                return Ok(warp::reply::with_status(
+                    warp::reply::json(
+                        &serde_json::json!({"error": "Duplicate Studio operation ID"}),
+                    ),
+                    warp::http::StatusCode::CONFLICT,
+                ));
+            }
         }
     };
 
     // Wait for response with timeout
-    match tokio::time::timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS), receiver).await {
+    match tokio::time::timeout(wait_timeout, receiver).await {
         Ok(Ok(response)) => Ok(warp::reply::with_status(
             warp::reply::json(
                 &serde_json::from_str::<serde_json::Value>(&response.body)
@@ -662,7 +984,7 @@ async fn handle_request(
         )),
         Ok(Err(_)) => {
             // Channel closed
-            state.lock().pending_requests.remove(&id);
+            state.lock().fail_request(&id);
             Ok(warp::reply::with_status(
                 warp::reply::json(&serde_json::json!({"error": "Request cancelled"})),
                 warp::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -670,7 +992,7 @@ async fn handle_request(
         }
         Err(_) => {
             // Timeout
-            state.lock().pending_requests.remove(&id);
+            state.lock().timeout_request(&id);
             Ok(warp::reply::with_status(
                 warp::reply::json(
                     &serde_json::json!({"error": "Request timed out waiting for Studio response"}),
@@ -854,6 +1176,12 @@ mod tests {
         StudioRequest {
             path: path.to_string(),
             body: None,
+            operation_id: None,
+            run_id: None,
+            owner_id: None,
+            step_id: None,
+            capability: None,
+            target: None,
         }
     }
 
@@ -881,11 +1209,14 @@ mod tests {
         for _ in 0..MAX_PENDING_REQUESTS {
             let (sender, receiver) = oneshot::channel();
             receivers.push(receiver);
-            assert!(state.enqueue(studio_request("/ping"), sender).is_some());
+            assert!(state.enqueue(studio_request("/ping"), sender).is_ok());
         }
 
         let (sender, _receiver) = oneshot::channel();
-        assert!(state.enqueue(studio_request("/ping"), sender).is_none());
+        assert_eq!(
+            state.enqueue(studio_request("/ping"), sender),
+            Err(EnqueueError::QueueFull)
+        );
         assert_eq!(state.pending_requests.len(), MAX_PENDING_REQUESTS);
     }
 
@@ -921,12 +1252,153 @@ mod tests {
             .expect("request should be leased");
 
         assert!(matches!(
-            state.complete_request(&id, "session-b"),
+            state.complete_request(&id, "session-b", 200),
             Err(CompleteRequestError::WrongSession)
         ));
         assert!(state.pending_requests.contains_key(&id));
-        assert!(state.complete_request(&id, "session-a").is_ok());
+        assert!(state.complete_request(&id, "session-a", 200).is_ok());
         assert!(!state.pending_requests.contains_key(&id));
+    }
+
+    #[test]
+    fn unleased_operation_is_removed_when_cancelled() {
+        let mut state = BridgeState::new();
+        let (sender, _receiver) = oneshot::channel();
+        let mut request = studio_request("/instance/create");
+        request.operation_id = Some("op_cancel_before_lease".to_string());
+        let id = state
+            .enqueue(request, sender)
+            .expect("request should be queued");
+
+        let record = state.cancel_operation("op_cancel_before_lease");
+        assert_eq!(record.status, OperationStatus::Cancelled);
+        assert!(!record.may_complete);
+        assert!(!state.pending_requests.contains_key(&id));
+        assert!(state.lease_next("session-a").is_none());
+    }
+
+    #[test]
+    fn leased_operation_records_completion_after_cancel() {
+        let mut state = BridgeState::new();
+        let (sender, _receiver) = oneshot::channel();
+        let mut request = studio_request("/instance/create");
+        request.operation_id = Some("op_cancel_after_lease".to_string());
+        let id = state
+            .enqueue(request, sender)
+            .expect("request should be queued");
+        state
+            .lease_next("session-a")
+            .expect("request should be leased");
+
+        let cancelling = state.cancel_operation("op_cancel_after_lease");
+        assert_eq!(cancelling.status, OperationStatus::CancelRequested);
+        assert!(cancelling.may_complete);
+
+        state
+            .complete_request(&id, "session-a", 200)
+            .expect("leased completion should still be accepted");
+        let completed = state
+            .operation_records
+            .get("op_cancel_after_lease")
+            .expect("operation history should remain");
+        assert_eq!(completed.status, OperationStatus::Completed);
+        assert!(completed.completed_after_cancel);
+        assert!(!completed.may_complete);
+    }
+
+    #[test]
+    fn timed_out_lease_keeps_a_bounded_late_response_window() {
+        let mut state = BridgeState::new();
+        let (sender, _receiver) = oneshot::channel();
+        let mut request = studio_request("/game/install");
+        request.operation_id = Some("op_install_timeout".to_string());
+        let id = state
+            .enqueue(request, sender)
+            .expect("request should be queued");
+        state
+            .lease_next("session-a")
+            .expect("request should be leased");
+
+        state.timeout_request(&id);
+        let timed_out = state
+            .operation_records
+            .get("op_install_timeout")
+            .expect("operation should remain queryable");
+        assert_eq!(timed_out.status, OperationStatus::CancelRequested);
+        assert!(timed_out.may_complete);
+        assert!(state.pending_requests.contains_key(&id));
+
+        state
+            .complete_request(&id, "session-a", 200)
+            .expect("late leased completion should be recorded");
+        let completed = state
+            .operation_records
+            .get("op_install_timeout")
+            .expect("completion should remain in history");
+        assert_eq!(completed.status, OperationStatus::Completed);
+        assert!(completed.completed_after_cancel);
+        assert!(!completed.may_complete);
+    }
+
+    #[test]
+    fn curated_game_install_has_a_bounded_extended_timeout() {
+        assert_eq!(
+            request_timeout("/game/install"),
+            Duration::from_secs(GAME_INSTALL_TIMEOUT_SECS)
+        );
+        assert_eq!(
+            request_timeout("/instance/create"),
+            Duration::from_secs(REQUEST_TIMEOUT_SECS)
+        );
+    }
+
+    #[test]
+    fn duplicate_client_operation_ids_are_rejected() {
+        let mut state = BridgeState::new();
+        let mut first = studio_request("/ping");
+        first.operation_id = Some("op_same".to_string());
+        let (first_sender, _first_receiver) = oneshot::channel();
+        state
+            .enqueue(first, first_sender)
+            .expect("first operation should queue");
+
+        let mut duplicate = studio_request("/ping");
+        duplicate.operation_id = Some("op_same".to_string());
+        let (duplicate_sender, _duplicate_receiver) = oneshot::channel();
+        assert_eq!(
+            state.enqueue(duplicate, duplicate_sender),
+            Err(EnqueueError::DuplicateOperation)
+        );
+    }
+
+    #[test]
+    fn cancellation_tombstone_closes_the_enqueue_race() {
+        let mut state = BridgeState::new();
+        let record = state.cancel_operation("op_cancelled_early");
+        assert_eq!(record.status, OperationStatus::Cancelled);
+
+        let mut late_request = studio_request("/instance/create");
+        late_request.operation_id = Some("op_cancelled_early".to_string());
+        let (sender, _receiver) = oneshot::channel();
+        assert_eq!(
+            state.enqueue(late_request, sender),
+            Err(EnqueueError::DuplicateOperation)
+        );
+    }
+
+    #[test]
+    fn operation_history_stays_bounded() {
+        let mut state = BridgeState::new();
+        for index in 0..(MAX_OPERATION_HISTORY + 20) {
+            state.cancel_operation(&format!("op_history_{index}"));
+        }
+
+        assert_eq!(state.operation_records.len(), MAX_OPERATION_HISTORY);
+        assert_eq!(state.operation_order.len(), MAX_OPERATION_HISTORY);
+        assert!(!state.operation_records.contains_key("op_history_0"));
+        assert!(state
+            .operation_records
+            .contains_key(&format!("op_history_{}", MAX_OPERATION_HISTORY + 19)));
     }
 
     #[test]

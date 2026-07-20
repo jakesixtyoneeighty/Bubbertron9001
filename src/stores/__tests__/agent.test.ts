@@ -57,14 +57,50 @@ describe("agent store", () => {
     expect(useAgentStore.getState().lastError).toBe("Script still errors");
   });
 
+  it("keeps append-only run events and rejects stale cross-run updates", () => {
+    const firstRun = useAgentStore
+      .getState()
+      .beginRun("Inspect the first place", true);
+    const secondRun = useAgentStore
+      .getState()
+      .beginRun("Inspect the second place", true);
+
+    const accepted = useAgentStore.getState().setPlan(
+      {
+        goal: "Stale goal",
+        summary: "This plan belongs to the first run",
+        steps: [],
+      },
+      firstRun,
+    );
+
+    expect(accepted).toBe(false);
+    expect(useAgentStore.getState().runId).toBe(secondRun);
+    expect(useAgentStore.getState().events).toMatchObject([
+      { runId: firstRun, type: "run_started" },
+      { runId: secondRun, type: "run_started" },
+    ]);
+    expect(
+      Object.isFrozen(useAgentStore.getState().events[0]?.details),
+    ).toBe(true);
+  });
+
   it("does not accept an overlapping read as post-mutation evidence", () => {
     useAgentStore.getState().beginRun("Change and inspect a part", true);
     const mutation = useAgentStore
       .getState()
-      .beginStudioOperation("roblox_set_property", "mutation");
+      .beginStudioOperation(
+        "roblox_set_property",
+        "mutation",
+        ["properties:game.Workspace.PartA"],
+      );
     const overlappingRead = useAgentStore
       .getState()
-      .beginStudioOperation("roblox_get_properties", "readback");
+      .beginStudioOperation(
+        "roblox_get_properties",
+        "readback",
+        ["properties:game.Workspace.PartA"],
+      );
 
     expect(mutation).not.toBeNull();
     expect(overlappingRead).not.toBeNull();
@@ -76,7 +112,11 @@ describe("agent store", () => {
 
     const laterRead = useAgentStore
       .getState()
-      .beginStudioOperation("roblox_get_properties", "readback");
+      .beginStudioOperation(
+        "roblox_get_properties",
+        "readback",
+        ["properties:game.Workspace.PartA"],
+      );
     useAgentStore.getState().completeStudioOperation(laterRead!);
     expect(
       hasFreshStudioReadback(useAgentStore.getState().studioEvidence)

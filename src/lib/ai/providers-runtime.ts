@@ -6,11 +6,17 @@ import { skillTools } from "@/lib/skills";
 import { appFetch } from "@/lib/http";
 import { planningTools } from "@/lib/agent/planning";
 import { hasRunningPlan } from "@/lib/agent/run-state";
+import {
+  clearDelegationCrew,
+  delegationTools,
+} from "@/lib/agent/delegation";
+import { registerWorkerExecutor } from "@/lib/agent/worker-runtime";
 import { codexChat } from "./codex-chat";
 import { errorMessage, getToolError } from "./errors";
 import { ROBLOX_SYSTEM_PROMPT } from "./system-prompt";
 import { getStandardStepPolicy } from "./providers";
 import type { ChatOptions, ProviderType } from "./providers";
+import { createStandardWorkerExecutor } from "./worker-runtime";
 
 function createStandardRuntime(
   provider: Exclude<ProviderType, "codex">,
@@ -46,6 +52,7 @@ function createStandardRuntime(
 
 export async function chat(options: ChatOptions) {
   const {
+    runId,
     model,
     provider,
     apiKey,
@@ -62,10 +69,12 @@ export async function chat(options: ChatOptions) {
     onFinish,
     onError,
   } = options;
+  let unregisterWorkerExecutor: (() => void) | undefined;
 
   try {
     if (provider === "codex") {
       return codexChat(model, messages, {
+        runId,
         signal,
         planningRequired,
         forceWebSearch,
@@ -90,8 +99,13 @@ export async function chat(options: ChatOptions) {
       ...robloxTools,
       ...skillTools,
       ...planningTools,
+      ...delegationTools,
       web_search: runtime.webSearch,
     } as ToolSet;
+    unregisterWorkerExecutor = registerWorkerExecutor(
+      runId,
+      createStandardWorkerExecutor(runtime.model, runtime.webSearch),
+    );
     const toolNames = Object.keys(tools);
 
     const result = streamText({
@@ -102,6 +116,7 @@ export async function chat(options: ChatOptions) {
       maxRetries: 2,
       timeout: 2 * 60 * 1000,
       abortSignal: signal,
+      experimental_context: { runId, ownerId: "coordinator" },
       messages: messages.map((message) => ({
         role: message.role,
         content: message.content,
@@ -112,6 +127,7 @@ export async function chat(options: ChatOptions) {
           planningRequired,
           forceWebSearch,
           toolNames,
+          runId,
         }),
     });
 
@@ -189,7 +205,7 @@ export async function chat(options: ChatOptions) {
     }
 
     if (streamFailure) throw streamFailure;
-    if (hasRunningPlan()) {
+    if (hasRunningPlan(runId)) {
       throw new Error(
         "The model stopped before every plan step was resolved and verified"
       );
@@ -202,5 +218,8 @@ export async function chat(options: ChatOptions) {
       error instanceof Error ? error : new Error(errorMessage(error));
     onError?.(normalized);
     throw normalized;
+  } finally {
+    clearDelegationCrew(runId);
+    unregisterWorkerExecutor?.();
   }
 }

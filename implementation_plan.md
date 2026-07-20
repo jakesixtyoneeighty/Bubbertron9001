@@ -153,15 +153,29 @@ Every release should satisfy the following:
    Studio plugin.
 2. Add live provider-contract canaries for OpenAI, Anthropic, and ChatGPT
    subscription tool loops without placing credentials in ordinary CI.
-3. Add cancellable or isolated execution before treating active arbitrary Luau
-   as interruptible; today cancellation stops future work, not Luau already
-   running in Studio.
-4. Add authenticated Roblox Open Cloud workflows only with explicit permission
+3. Add scoped operation IDs and deterministic bridge cancellation before
+   parallel execution. Unleased work must be removable from the queue; leased
+   work and active arbitrary Luau must be reported honestly as potentially
+   completing after cancellation.
+4. Add the versioned change-set and Change Preview foundation shared by starter
+   games and future worker-authored proposals.
+5. Ship One-Click Obby through a single coordinator with a trusted template,
+   collision preflight, bounded installation, manifest verification, recovery,
+   and a live-tested undo path.
+6. Add at most two read-only sub-agents for research, Studio inspection, and
+   plan review. The coordinator remains the sole owner of questions, approvals,
+   Studio mutations, root-plan completion, and final verification.
+7. Allow workers to propose isolated change sets only after resource ownership,
+   cancellation, stale-state detection, deterministic merge order, and
+   serialized commit behavior have deterministic tests.
+8. Add authenticated Roblox Open Cloud workflows only with explicit permission
    and confirmation boundaries.
-5. Add parallel sub-agents only after plan ownership, cancellation, and merge
-   behavior have deterministic tests.
-6. Add Developer ID signing, Apple notarization, universal Mac artifacts, and
+9. Add Developer ID signing, Apple notarization, universal Mac artifacts, and
    automatic updates once the release credentials and stable release host exist.
+
+The detailed product contract, architecture, rollout, and acceptance criteria
+for priorities 4–7 live in
+[`docs/SUBAGENTS_AND_ONE_CLICK_GAMES.md`](docs/SUBAGENTS_AND_ONE_CLICK_GAMES.md).
 
 ## Definition of Done
 
