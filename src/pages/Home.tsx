@@ -46,7 +46,10 @@ import { useAppShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { improvePrompt } from "@/lib/ai/prompt-improver";
 import { downloadPairedStudioPlugin } from "@/lib/plugin-download";
 import { cn } from "@/lib/utils";
-import { ArrowUp, Square, CheckCircle2, Download, FolderOpen, RefreshCw, Box, FileText, Globe, Play, ListTodo, Settings, Sparkles } from "lucide-react";
+import { playSound, isMuted, toggleMuted } from "@/lib/sounds";
+import { SparkleField } from "@/components/effects/SparkleField";
+import { ConfettiBurst } from "@/components/effects/ConfettiBurst";
+import { ArrowUp, Square, CheckCircle2, Download, FolderOpen, RefreshCw, Box, FileText, Globe, Play, ListTodo, Settings, Sparkles, Volume2, VolumeX } from "lucide-react";
 
 const SUGGESTIONS = [
   // Gameplay systems
@@ -80,6 +83,48 @@ const SUGGESTIONS = [
   "Build a trading system between players",
 ];
 
+// Animated aurora backdrop rendered behind every screen
+function AuroraBackground() {
+  return (
+    <div className="fixed inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
+      <div className="aurora-blob aurora-1" />
+      <div className="aurora-blob aurora-2" />
+      <div className="aurora-blob aurora-3" />
+      <div className="absolute inset-0 bg-grid" />
+      <SparkleField count={32} />
+      <div className="absolute inset-0 bg-noise" />
+    </div>
+  );
+}
+
+// Mute/unmute button for the synthesized sound effects
+function SoundToggle() {
+  const [muted, setMutedState] = useState(isMuted());
+
+  const handleToggle = () => {
+    const nowMuted = toggleMuted();
+    setMutedState(nowMuted);
+    if (!nowMuted) playSound("click");
+  };
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className={cn(
+        "h-8 w-8 rounded-lg transition-all",
+        muted
+          ? "text-muted-foreground hover:text-foreground"
+          : "text-primary hover:bg-primary/15 animate-wiggle-hover"
+      )}
+      onClick={handleToggle}
+      title={muted ? "Turn sounds on" : "Turn sounds off"}
+    >
+      {muted ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
+    </Button>
+  );
+}
+
 // Step indicator for connection flow
 function ConnectionStep({ 
   step, 
@@ -98,8 +143,8 @@ function ConnectionStep({
         <div
           className={cn(
             "w-8 h-8 rounded-full flex items-center justify-center text-sm font-medium transition-all",
-            status === "complete" && "bg-green-100 text-green-600",
-            status === "active" && "bg-primary/10 text-primary",
+            status === "complete" && "bg-primary/20 text-primary glow-lime",
+            status === "active" && "bg-primary/10 text-primary animate-glow",
             status === "pending" && "bg-muted text-muted-foreground"
           )}
         >
@@ -115,7 +160,7 @@ function ConnectionStep({
       <div className="flex-1 pt-1">
         <h3 className={cn(
           "font-medium",
-          status === "complete" && "text-green-600",
+          status === "complete" && "text-primary",
           status === "active" && "text-foreground",
           status === "pending" && "text-muted-foreground"
         )}>
@@ -190,22 +235,26 @@ function ConnectionScreen({
   const pluginInstalled = pluginStatus?.installed && pluginStatus?.is_current_version;
 
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className="h-screen flex flex-col bg-background relative">
+      <AuroraBackground />
       {/* Minimal header */}
-      <header className="flex items-center justify-between px-6 py-4">
+      <header className="relative z-10 flex items-center justify-between px-6 py-4">
         <Logo />
-        <SettingsDialog />
+        <div className="flex items-center gap-2">
+          <SoundToggle />
+          <SettingsDialog />
+        </div>
       </header>
 
       {/* Centered content */}
-      <main className="flex-1 flex flex-col items-center justify-center px-6 pb-24">
-        <div className="w-full max-w-md space-y-6">
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pb-24">
+        <div className="w-full max-w-md space-y-6 animate-pop-in">
           {/* Main heading */}
           <div className="text-center space-y-2">
-            <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-primary/10 mb-4">
+            <div className="inline-flex items-center justify-center w-16 h-16 rounded-3xl bg-primary/10 mb-4 animate-glow animate-float glow-lime">
               <Loader variant="wave" size="lg" />
             </div>
-            <h1 className="text-2xl font-heading text-foreground">
+            <h1 className="text-2xl font-heading text-gradient-hero">
               Connecting to Roblox Studio
             </h1>
             <div className="text-muted-foreground">
@@ -214,7 +263,7 @@ function ConnectionScreen({
           </div>
 
           {/* Connection steps */}
-          <div className="bg-card rounded-2xl border border-border p-6 space-y-6">
+          <div className="glass rounded-2xl p-6 space-y-6">
             <ConnectionStep
               step={1}
               title={`Start ${BRAND.name} Desktop`}
@@ -242,19 +291,19 @@ function ConnectionScreen({
           </div>
 
           {/* Plugin Installation Card */}
-          <div className="bg-card rounded-2xl border border-border p-5 space-y-4">
+          <div className="glass rounded-2xl p-5 space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <span className="font-medium text-foreground">Plugin Status</span>
                 {isChecking ? (
                   <Loader variant="circular" size="sm" />
                 ) : pluginInstalled ? (
-                  <span className="flex items-center gap-1 text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full">
+                  <span className="flex items-center gap-1 text-xs text-primary bg-primary/15 px-2 py-0.5 rounded-full">
                     <CheckCircle2 className="w-3 h-3" />
                     Installed
                   </span>
                 ) : pluginStatus?.installed ? (
-                  <span className="flex items-center gap-1 text-xs text-amber-600 bg-amber-50 px-2 py-0.5 rounded-full">
+                  <span className="flex items-center gap-1 text-xs text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full">
                     Update Available
                   </span>
                 ) : (
@@ -278,9 +327,9 @@ function ConnectionScreen({
             {installMessage && (
               <p className={cn(
                 "text-sm p-2 rounded-lg",
-                installMessage.startsWith("Error") 
-                  ? "bg-red-50 text-red-700" 
-                  : "bg-green-50 text-green-700"
+                installMessage.startsWith("Error")
+                  ? "bg-destructive/15 text-red-300"
+                  : "bg-primary/15 text-primary"
               )}>
                 {installMessage}
               </p>
@@ -355,24 +404,45 @@ function ConnectionScreen({
 function StatusBadge({ status }: { status: ConnectionStatus }) {
   const config = {
     disconnected: {
-      color: "bg-zinc-400",
+      color: "bg-studio-disconnected",
+      ping: false,
       label: "Offline",
     },
     bridge_only: {
-      color: "bg-amber-500",
+      color: "bg-amber-400",
+      ping: true,
       label: "Waiting",
     },
     connected: {
-      color: "bg-green-500",
+      color: "bg-primary",
+      ping: true,
       label: "Connected",
     },
   };
 
-  const { color, label } = config[status];
+  const { color, ping, label } = config[status];
 
   return (
-    <div className="flex items-center gap-2 text-sm text-muted-foreground">
-      <div className={cn("w-2 h-2 rounded-full", color)} />
+    <div
+      className={cn(
+        "flex items-center gap-2 text-sm px-3 py-1 rounded-full border transition-colors",
+        status === "connected"
+          ? "text-primary border-primary/30 bg-primary/10"
+          : "text-muted-foreground border-border bg-muted/30"
+      )}
+    >
+      <span className="relative flex w-2 h-2">
+        {ping && (
+          <span
+            className={cn(
+              "absolute inline-flex w-full h-full rounded-full opacity-75",
+              color
+            )}
+            style={{ animation: "status-ping 1.8s cubic-bezier(0, 0, 0.2, 1) infinite" }}
+          />
+        )}
+        <span className={cn("relative inline-flex w-2 h-2 rounded-full", color)} />
+      </span>
       <span>{label}</span>
     </div>
   );
@@ -384,6 +454,7 @@ export function Home() {
   const [isImproving, setIsImproving] = useState(false);
   const [workOffline, setWorkOffline] = useState(false);
   const [displayedSuggestions, setDisplayedSuggestions] = useState<string[]>([]);
+  const [confettiTrigger, setConfettiTrigger] = useState(0);
   const {
     messages,
     isStreaming,
@@ -432,6 +503,8 @@ export function Home() {
   useEffect(() => {
     if (studioStatus === "connected") {
       setWorkOffline(true);
+      playSound("connect");
+      setConfettiTrigger((n) => n + 1);
     }
   }, [studioStatus]);
 
@@ -510,6 +583,7 @@ export function Home() {
 
     setInput("");
     setActiveChips([]); // Clear chips after submit
+    playSound("send");
 
     console.log("[Home] Submitting message:", userMessage, "with context:", chipContext);
 
@@ -545,6 +619,7 @@ export function Home() {
         },
         onToolCall: (toolCall) => {
           console.log("[Home] Tool call received:", toolCall.name);
+          playSound("tool");
           // Add tool call to the assistant message
           addToolCall(assistantId, {
             id: toolCall.id,
@@ -556,6 +631,7 @@ export function Home() {
         },
         onToolResult: (toolResult) => {
           console.log("[Home] Tool result received:", toolResult.id);
+          playSound("toolDone");
           // Update the tool call with the result
           updateToolCall(assistantId, toolResult.id, {
             status: "complete",
@@ -568,6 +644,7 @@ export function Home() {
             toolError.name,
             toolError.error
           );
+          playSound("error");
           updateToolCall(assistantId, toolError.id, {
             status: "error",
             error: toolError.error,
@@ -579,6 +656,7 @@ export function Home() {
         },
         onFinish: () => {
           console.log("[Home] Stream finished, total length:", fullText.length);
+          playSound("receive");
           const agent = useAgentStore.getState();
           if (!agent.plan && agent.phase !== "completed") {
             agent.completeRun("Response completed");
@@ -587,6 +665,7 @@ export function Home() {
         onError: (error) => {
           if (!isAbortError(error)) {
             console.error("[Home] Stream error:", error);
+            playSound("error");
             setError(error.message);
             useAgentStore.getState().failRun(error.message);
           }
@@ -627,10 +706,12 @@ export function Home() {
   ]);
 
   const handleSuggestionClick = (suggestion: string) => {
+    playSound("click");
     setInput(suggestion);
   };
 
   const handleChipClick = (chipId: ChipAction) => {
+    playSound("click");
     // Toggle chip
     setActiveChips(prev =>
       prev.includes(chipId)
@@ -667,38 +748,44 @@ export function Home() {
   // Empty state - show centered input (connected but no messages)
   if (messages.length === 0) {
     return (
-      <div className="h-screen flex flex-col bg-background">
+      <div className="h-screen flex flex-col bg-background relative">
+        <AuroraBackground />
         {/* Header */}
-        <header className="flex items-center justify-between px-6 py-4 border-b border-border/50">
+        <header className="relative z-10 flex items-center justify-between px-6 py-4 border-b glass-bar">
           <Logo />
           <div className="flex items-center gap-3">
             <StatusBadge status={studioStatus} />
+            <SoundToggle />
             <SettingsDialog />
           </div>
         </header>
 
         {!isConnected && (
-          <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-800">
+          <div className="relative z-10 border-b border-amber-400/20 bg-amber-400/10 px-4 py-2 text-center text-sm text-amber-300">
             Research mode — web, documentation, planning, and skills are
             available; Studio editing is paused.
           </div>
         )}
 
         {/* Centered content */}
-        <main className="flex-1 flex flex-col items-center justify-center px-6 pb-24">
+        <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-6 pb-24">
           <div className="w-full max-w-2xl space-y-8">
             {/* Welcome message */}
-            <div className="text-center space-y-2">
-              <h1 className="text-3xl font-heading text-foreground">
+            <div className="text-center space-y-4 animate-pop-in">
+              <div className="inline-flex animate-float">
+                <LogoMark className="w-16 h-16 rounded-2xl glow-lime" />
+              </div>
+              <h1 className="text-4xl font-heading text-gradient-hero">
                 What would you like to build?
               </h1>
-              <p className="text-muted-foreground">
-                I can help you create scripts, design systems, and build games in Roblox Studio.
+              <p className="text-muted-foreground max-w-md mx-auto">
+                Your Roblox co-builder is standing by. Drop a mission below —
+                scripts, systems, GUIs, the whole world.
               </p>
             </div>
 
             {/* Input */}
-            <div className="space-y-3">
+            <div className="space-y-3 animate-slide-up stagger-2">
               <ContextChips
                 onChipClick={handleChipClick}
                 activeChips={activeChips}
@@ -710,27 +797,27 @@ export function Home() {
                 onSubmit={handleSubmit}
                 isLoading={isStreaming}
                 className={cn(
-                  "rounded-2xl border-2 border-border shadow-lg bg-card",
+                  "rounded-2xl glass-strong transition-shadow duration-300 focus-within:glow-lime",
                   isImproving && "relative overflow-hidden"
                 )}
               >
                 {/* Skeleton shimmer overlay when improving */}
                 {isImproving && (
                   <div className="absolute inset-0 pointer-events-none z-10">
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer" />
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/25 to-transparent animate-shimmer" />
                   </div>
                 )}
                 <PromptInputTextarea
                   placeholder={
                     isImproving
-                      ? "Improving your prompt..."
+                      ? "Powering up your prompt..."
                       : hasConfiguredProvider
                         ? "Ask me anything about Roblox development..."
                         : "Configure an API key in settings to start..."
                   }
                   disabled={!hasConfiguredProvider || isImproving}
                   className={cn(
-                    "min-h-[60px] text-base",
+                    "min-h-[60px] text-base text-cream placeholder:text-muted-foreground",
                     isImproving && "opacity-60"
                   )}
                 />
@@ -757,7 +844,7 @@ export function Home() {
                         className={cn(
                           "h-8 w-8 rounded-lg transition-all",
                           isImproving && "animate-pulse",
-                          input.trim() && !isImproving && !isStreaming && "text-amber-500 hover:text-amber-600 hover:bg-amber-50"
+                          input.trim() && !isImproving && !isStreaming && "text-primary hover:text-primary hover:bg-primary/15"
                         )}
                         onClick={handleImprovePrompt}
                         disabled={!input.trim() || isImproving || isStreaming || !hasConfiguredProvider}
@@ -771,7 +858,10 @@ export function Home() {
                     </PromptInputAction>
                     <Button
                       size="icon"
-                      className="h-8 w-8 rounded-lg"
+                      className={cn(
+                        "h-9 w-9 rounded-xl",
+                        input.trim() && !isStreaming && hasConfiguredProvider && "send-ready"
+                      )}
                       onClick={handleSubmit}
                       disabled={!input.trim() || isStreaming || !hasConfiguredProvider}
                     >
@@ -787,12 +877,12 @@ export function Home() {
             </div>
 
             {/* Suggestions */}
-            <div className="flex flex-wrap justify-center gap-2">
-              {displayedSuggestions.map((suggestion) => (
+            <div className="flex flex-wrap justify-center gap-2 animate-slide-up stagger-3">
+              {displayedSuggestions.map((suggestion, i) => (
                 <PromptSuggestion
                   key={suggestion}
                   onClick={() => handleSuggestionClick(suggestion)}
-                  className="rounded-xl"
+                  className={cn("rounded-xl", `stagger-${(i % 5) + 1}`)}
                 >
                   {suggestion}
                 </PromptSuggestion>
@@ -801,12 +891,12 @@ export function Home() {
 
             {/* Not configured warning */}
             {!hasConfiguredProvider && (
-              <div className="text-center">
-                <p className="text-sm text-amber-600">
+              <div className="text-center animate-fade-in">
+                <p className="text-sm text-amber-300">
                   <Icon name="key" size="sm" className="inline mr-1" />
                   No API key configured.{" "}
                   <SettingsDialog>
-                    <button className="underline hover:no-underline">
+                    <button className="underline hover:no-underline text-primary">
                       Open settings
                     </button>
                   </SettingsDialog>{" "}
@@ -816,24 +906,32 @@ export function Home() {
             )}
           </div>
         </main>
+        <ConfettiBurst trigger={confettiTrigger} />
       </div>
     );
   }
 
   // Chat view
   return (
-    <div className="h-screen flex flex-col bg-background">
+    <div className="h-screen flex flex-col bg-background relative">
+      <AuroraBackground />
+      <ConfettiBurst trigger={confettiTrigger} />
+
       {/* Header */}
-      <header className="flex items-center justify-between px-6 py-3 border-b border-border/50 bg-card/50 backdrop-blur-sm">
+      <header className="relative z-10 flex items-center justify-between px-6 py-3 border-b glass-bar">
         <div className="flex items-center gap-3">
-          <LogoMark className="w-8 h-8" />
-          <span className="text-lg font-logo">{BRAND.name}</span>
+          <LogoMark className="w-8 h-8 rounded-xl glow-lime" />
+          <span className="text-lg font-logo tracking-tight">{BRAND.name}</span>
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={studioStatus} />
           <div className="h-4 w-px bg-border mx-1" />
+          <SoundToggle />
           <ChatActions
-            onClear={clearMessages}
+            onClear={() => {
+              playSound("click");
+              clearMessages();
+            }}
             disabled={messages.length === 0 || isStreaming}
           />
           <SettingsPanel
@@ -847,19 +945,19 @@ export function Home() {
       </header>
 
       {!isConnected && (
-        <div className="border-b border-amber-200 bg-amber-50 px-4 py-2 text-center text-sm text-amber-800">
+        <div className="relative z-10 border-b border-amber-400/20 bg-amber-400/10 px-4 py-2 text-center text-sm text-amber-300">
           Research mode — Studio editing tools will resume after the bridge
           reconnects.
         </div>
       )}
 
       {/* Chat messages */}
-      <ChatContainerRoot className="flex-1 relative">
+      <ChatContainerRoot className="relative z-10 flex-1">
         <ChatContainerContent className="max-w-3xl mx-auto px-4 py-6 space-y-6">
           {/* Error alert */}
           {error && (
-            <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4 flex items-start gap-3">
-              <div className="flex-shrink-0 w-5 h-5 mt-0.5">
+            <div className="bg-destructive/15 border border-destructive/40 text-red-200 rounded-xl p-4 flex items-start gap-3 animate-pop-in">
+              <div className="flex-shrink-0 w-5 h-5 mt-0.5 text-brick">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <circle cx="12" cy="12" r="10" />
                   <line x1="12" y1="8" x2="12" y2="12" />
@@ -867,12 +965,12 @@ export function Home() {
                 </svg>
               </div>
               <div className="flex-1">
-                <p className="font-medium">Error</p>
-                <p className="text-sm mt-1">{error}</p>
+                <p className="font-medium text-cream">Error</p>
+                <p className="text-sm mt-1 opacity-90">{error}</p>
               </div>
               <button
                 onClick={() => setError(null)}
-                className="flex-shrink-0 text-red-500 hover:text-red-700"
+                className="flex-shrink-0 text-brick hover:text-cream transition-colors"
               >
                 <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <line x1="18" y1="6" x2="6" y2="18" />
@@ -890,20 +988,20 @@ export function Home() {
           )}
 
           {messages.map((message) => (
-            <Message key={message.id} className="gap-4">
+            <Message key={message.id} className="gap-4 message-enter">
               {message.role === "assistant" ? (
                 <BotAvatar />
               ) : (
                 <UserAvatar />
               )}
-              <div className="flex-1 space-y-3">
+              <div className="flex-1 space-y-3 min-w-0">
                 {/* Context chips indicator for user messages */}
                 {message.role === "user" && message.contextChips && message.contextChips.length > 0 && (
                   <div className="flex items-center gap-1.5 flex-wrap">
                     {message.contextChips.map((chip) => (
                       <span
                         key={chip}
-                        className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-neutral-100 text-neutral-600 rounded-full"
+                        className="inline-flex items-center gap-1 px-2 py-0.5 text-xs font-medium bg-primary/15 text-primary rounded-full border border-primary/25"
                       >
                         {chip === "search-models" && <><Box className="w-3 h-3" /> Models</>}
                         {chip === "docs" && <><FileText className="w-3 h-3" /> Docs</>}
@@ -925,17 +1023,19 @@ export function Home() {
                   <MessageContent
                     markdown={message.role === "assistant"}
                     className={cn(
-                      "prose prose-sm max-w-none",
-                      message.role === "user" && "bg-muted/50 rounded-2xl px-4 py-3"
+                      "prose prose-sm max-w-none prose-invert",
+                      message.role === "user"
+                        ? "bubble-user rounded-2xl px-4 py-3"
+                        : "bubble-assistant rounded-2xl px-4 py-3"
                     )}
                   >
                     {message.content}
                   </MessageContent>
                 ) : (
                   isStreaming && message.role === "assistant" && !message.toolCalls?.length && (
-                    <div className="flex items-center gap-2 h-8">
+                    <div className="flex items-center gap-2 h-8 px-3 glass rounded-full w-fit">
                       <Loader variant="wave" size="sm" />
-                      <span className="text-sm text-muted-foreground">Thinking...</span>
+                      <span className="text-sm text-muted-foreground">Cooking up ideas...</span>
                     </div>
                   )
                 )}
@@ -949,7 +1049,7 @@ export function Home() {
 
           {/* Pending question from AI */}
           {pendingQuestion && (
-            <div className="max-w-2xl mx-auto">
+            <div className="max-w-2xl mx-auto animate-pop-in">
               <QuestionPrompt
                 questions={pendingQuestion.questions}
                 onSubmit={answerQuestion}
@@ -960,10 +1060,10 @@ export function Home() {
 
           {/* Streaming indicator */}
           {isStreaming && !pendingQuestion && (
-            <div className="flex items-center gap-3 px-4 py-3 bg-muted/30 rounded-xl max-w-fit mx-auto">
+            <div className="flex items-center gap-3 px-4 py-3 glass rounded-xl max-w-fit mx-auto animate-glow">
               <Loader variant="wave" size="sm" />
               <span className="text-sm text-muted-foreground">
-                {BRAND.name} is working...
+                {BRAND.name} is building...
               </span>
             </div>
           )}
@@ -971,12 +1071,12 @@ export function Home() {
         
         {/* Scroll to bottom button */}
         <div className="absolute bottom-24 left-1/2 -translate-x-1/2">
-          <ScrollButton className="shadow-lg rounded-full" />
+          <ScrollButton className="shadow-lg rounded-full glow-lime border border-primary/30" />
         </div>
       </ChatContainerRoot>
 
       {/* Input */}
-      <div className="border-t border-border/50 bg-card/50 backdrop-blur-sm px-4 py-4">
+      <div className="relative z-10 border-t glass-bar px-4 py-4">
         <div className="max-w-3xl mx-auto space-y-3">
           <ContextChips
             onChipClick={handleChipClick}
@@ -989,20 +1089,20 @@ export function Home() {
             onSubmit={handleSubmit}
             isLoading={isStreaming}
             className={cn(
-              "rounded-2xl border shadow-sm",
+              "rounded-2xl glass-strong transition-shadow duration-300 focus-within:glow-lime",
               isImproving && "relative overflow-hidden"
             )}
           >
             {/* Skeleton shimmer overlay when improving */}
             {isImproving && (
               <div className="absolute inset-0 pointer-events-none z-10">
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer" />
+                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-primary/25 to-transparent animate-shimmer" />
               </div>
             )}
             <PromptInputTextarea
-              placeholder={isImproving ? "Improving your prompt..." : "Ask a follow-up..."}
+              placeholder={isImproving ? "Powering up your prompt..." : "Ask a follow-up..."}
               className={cn(
-                "min-h-[44px] text-base",
+                "min-h-[44px] text-base text-cream placeholder:text-muted-foreground",
                 isImproving && "opacity-60"
               )}
               disabled={isImproving}
@@ -1030,7 +1130,7 @@ export function Home() {
                     className={cn(
                       "h-8 w-8 rounded-lg transition-all",
                       isImproving && "animate-pulse",
-                      input.trim() && !isImproving && !isStreaming && "text-amber-500 hover:text-amber-600 hover:bg-amber-50"
+                      input.trim() && !isImproving && !isStreaming && "text-primary hover:text-primary hover:bg-primary/15"
                     )}
                     onClick={handleImprovePrompt}
                     disabled={!input.trim() || isImproving || isStreaming}
@@ -1046,15 +1146,21 @@ export function Home() {
                   <Button
                     size="icon"
                     variant="destructive"
-                    className="h-8 w-8 rounded-lg"
-                    onClick={handleStop}
+                    className="h-9 w-9 rounded-xl"
+                    onClick={() => {
+                      playSound("click");
+                      handleStop();
+                    }}
                   >
                     <Square className="h-4 w-4 fill-current" />
                   </Button>
                 ) : (
                   <Button
                     size="icon"
-                    className="h-8 w-8 rounded-lg"
+                    className={cn(
+                      "h-9 w-9 rounded-xl",
+                      input.trim() && "send-ready"
+                    )}
                     onClick={handleSubmit}
                     disabled={!input.trim()}
                   >

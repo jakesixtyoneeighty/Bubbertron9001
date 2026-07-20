@@ -19,6 +19,7 @@ import {
   FolderTree,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { playSound } from "@/lib/sounds";
 
 interface QuickAction {
   id: string;
@@ -77,8 +78,14 @@ export function QuickActions({ onAction, disabled, className }: QuickActionsProp
               <Button
                 variant="outline"
                 size="sm"
-                className="gap-1.5 h-8"
-                onClick={() => onAction(action.prompt)}
+                className="gap-1.5 h-8 hover-lift border-primary/20"
+                onClick={() => {
+                  playSound("click");
+                  onAction(action.prompt);
+                }}
+                onMouseEnter={() => {
+                  if (!disabled) playSound("hover");
+                }}
                 disabled={disabled}
               >
                 {action.icon}
@@ -129,7 +136,7 @@ export function ChatActions({ onClear, onExport, disabled, className }: ChatActi
             <Button
               variant="ghost"
               size="icon"
-              className="h-8 w-8 text-destructive hover:text-destructive"
+              className="h-8 w-8 text-brick hover:text-brick hover:bg-destructive/15"
               onClick={onClear}
               disabled={disabled}
             >

@@ -10,8 +10,8 @@ interface AvatarIconProps {
 export function BotAvatar({ className }: AvatarIconProps) {
   return (
     <div className={cn(
-      "flex items-center justify-center rounded-lg bg-primary text-primary-foreground",
-      "w-8 h-8",
+      "flex items-center justify-center rounded-xl bg-primary text-primary-foreground",
+      "w-9 h-9 shadow-[0_0_16px_rgba(181,201,106,0.35)] ring-1 ring-primary/40",
       className
     )} role="img" aria-label={`${BRAND.shortName} assistant`}>
       <LogoMark className="w-5 h-5" />
@@ -23,8 +23,8 @@ export function BotAvatar({ className }: AvatarIconProps) {
 export function UserAvatar({ className }: AvatarIconProps) {
   return (
     <div className={cn(
-      "flex items-center justify-center rounded-lg bg-muted text-muted-foreground",
-      "w-8 h-8",
+      "flex items-center justify-center rounded-xl glass text-cream",
+      "w-9 h-9 ring-1 ring-border",
       className
     )}>
       <svg

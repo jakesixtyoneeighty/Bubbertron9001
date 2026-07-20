@@ -1,5 +1,7 @@
 import { Button } from "@/components/ui/button";
 import { BookOpen, Globe, Play, FileText, Box } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { playSound } from "@/lib/sounds";
 
 export type ChipAction = "search-models" | "docs" | "web" | "run-code" | "plan" | "toolbox";
 
@@ -59,8 +61,15 @@ export function ContextChips({ onChipClick, activeChips = [], disabled = false }
             key={chip.id}
             variant={isActive ? "default" : "outline"}
             size="sm"
-            className="h-7 text-xs gap-1.5 rounded-full shrink-0 font-normal"
+            className={cn(
+              "h-7 text-xs gap-1.5 rounded-full shrink-0 font-normal transition-all",
+              isActive && "chip-active",
+              !isActive && "hover:border-primary/50 hover:text-primary"
+            )}
             onClick={() => onChipClick(chip.id)}
+            onMouseEnter={() => {
+              if (!disabled) playSound("hover");
+            }}
             disabled={disabled}
             title={chip.description}
           >

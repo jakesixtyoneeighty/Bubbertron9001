@@ -25,13 +25,13 @@ const phaseLabels = {
 
 function StepIcon({ status }: { status: PlanStepStatus }) {
   if (status === "completed") {
-    return <Check className="h-3.5 w-3.5 text-green-600" />;
+    return <Check className="h-3.5 w-3.5 text-primary" />;
   }
   if (status === "in_progress") {
-    return <LoaderCircle className="h-3.5 w-3.5 animate-spin" />;
+    return <LoaderCircle className="h-3.5 w-3.5 animate-spin text-primary" />;
   }
   if (status === "error") {
-    return <CircleAlert className="h-3.5 w-3.5 text-red-600" />;
+    return <CircleAlert className="h-3.5 w-3.5 text-brick" />;
   }
   if (status === "skipped") {
     return <X className="h-3.5 w-3.5 text-muted-foreground" />;
@@ -71,10 +71,10 @@ export function PlanView() {
   ).length;
 
   return (
-    <section className="rounded-xl border bg-card/80 overflow-hidden">
+    <section className="rounded-xl glass border border-primary/20 overflow-hidden animate-pop-in">
       <button
         type="button"
-        className="flex w-full items-center gap-3 px-4 py-3 text-left"
+        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-primary/5 transition-colors"
         onClick={() => setExpanded((value) => !value)}
         aria-expanded={expanded}
       >
@@ -90,9 +90,9 @@ export function PlanView() {
               className={cn(
                 "rounded-full px-2 py-0.5 text-[11px]",
                 phase === "error" || phase === "repairing"
-                  ? "bg-red-50 text-red-700"
+                  ? "bg-destructive/20 text-red-200"
                   : phase === "completed"
-                    ? "bg-green-50 text-green-700"
+                    ? "bg-primary/20 text-primary"
                     : "bg-muted text-muted-foreground"
               )}
             >
@@ -107,19 +107,19 @@ export function PlanView() {
           </p>
         </div>
         {phase === "repairing" ? (
-          <RotateCcw className="h-4 w-4 text-amber-600" />
+          <RotateCcw className="h-4 w-4 text-amber-300" />
         ) : null}
       </button>
 
       {expanded ? (
-        <div className="border-t px-4 py-3 space-y-3">
+        <div className="border-t border-border/60 px-4 py-3 space-y-3">
           <p className="text-xs text-muted-foreground">{plan.summary}</p>
           {skillNames.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">
               {skillNames.map((name) => (
                 <span
                   key={name}
-                  className="rounded-md bg-muted px-2 py-1 text-[11px] text-muted-foreground"
+                  className="rounded-md bg-primary/10 border border-primary/20 px-2 py-1 text-[11px] text-primary"
                 >
                   {name}
                 </span>
@@ -152,12 +152,12 @@ export function PlanView() {
             ))}
           </ol>
           {lastError ? (
-            <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+            <p className="rounded-lg bg-destructive/20 border border-destructive/30 px-3 py-2 text-xs text-red-200">
               {lastError}
             </p>
           ) : null}
           {plan.verification ? (
-            <p className="rounded-lg bg-green-50 px-3 py-2 text-xs text-green-700">
+            <p className="rounded-lg bg-primary/15 border border-primary/25 px-3 py-2 text-xs text-primary">
               Verified: {plan.verification}
             </p>
           ) : null}

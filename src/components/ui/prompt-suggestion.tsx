@@ -1,6 +1,7 @@
 import { Button, buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 import { VariantProps } from "class-variance-authority"
+import { playSound } from "@/lib/sounds"
 
 export type PromptSuggestionProps = {
   children: React.ReactNode
@@ -16,17 +17,27 @@ function PromptSuggestion({
   size,
   className,
   highlight,
+  onMouseEnter,
   ...props
 }: PromptSuggestionProps) {
   const isHighlightMode = highlight !== undefined && highlight.trim() !== ""
   const content = typeof children === "string" ? children : ""
+
+  const handleHover: React.MouseEventHandler<HTMLButtonElement> = (e) => {
+    playSound("hover")
+    onMouseEnter?.(e)
+  }
 
   if (!isHighlightMode) {
     return (
       <Button
         variant={variant || "outline"}
         size={size || "lg"}
-        className={cn("rounded-full", className)}
+        className={cn(
+          "rounded-full hover-lift btn-shine border-primary/20 bg-card/30",
+          className
+        )}
+        onMouseEnter={handleHover}
         {...props}
       >
         {children}
@@ -44,6 +55,7 @@ function PromptSuggestion({
           "hover:bg-accent",
           className
         )}
+        onMouseEnter={handleHover}
         {...props}
       >
         {children}
@@ -65,6 +77,7 @@ function PromptSuggestion({
         "hover:bg-accent",
         className
       )}
+      onMouseEnter={handleHover}
       {...props}
     >
       {shouldHighlight ? (

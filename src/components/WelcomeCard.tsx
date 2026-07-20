@@ -69,7 +69,7 @@ export function WelcomeCard({ className, compact = false }: WelcomeCardProps) {
   return (
     <div
       className={cn(
-        "rounded-2xl border bg-gradient-to-br from-background to-muted/30 p-6",
+        "rounded-2xl glass-strong p-6",
         "animate-fade-in",
         className
       )}
@@ -144,11 +144,11 @@ export function TipOfTheDay({ className }: { className?: string }) {
   return (
     <div
       className={cn(
-        "flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 text-amber-800 text-xs",
+        "flex items-center gap-2 px-3 py-2 rounded-lg glass text-cream/90 text-xs border border-primary/20",
         className
       )}
     >
-      <Sparkles className="w-3.5 h-3.5 flex-shrink-0" />
+      <Sparkles className="w-3.5 h-3.5 flex-shrink-0 text-primary" />
       <span>{tip}</span>
     </div>
   );

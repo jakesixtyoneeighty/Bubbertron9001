@@ -67,10 +67,10 @@ export function QuestionPrompt({ questions, onSubmit, disabled = false }: Questi
   };
 
   return (
-    <div className="rounded-xl border bg-amber-50/50 p-4 space-y-4">
-      <div className="flex items-center gap-2 text-amber-700">
+    <div className="rounded-xl glass-strong border border-primary/30 p-4 space-y-4 animate-pop-in">
+      <div className="flex items-center gap-2 text-primary">
         <HelpCircle className="w-4 h-4" />
-        <span className="text-sm font-medium">AI needs your input</span>
+        <span className="text-sm font-medium">B9 needs your call</span>
       </div>
 
       <div className="space-y-4">
@@ -84,7 +84,7 @@ export function QuestionPrompt({ questions, onSubmit, disabled = false }: Questi
                 value={answers[qIndex] as string}
                 onChange={(e) => updateAnswer(qIndex, e.target.value)}
                 disabled={disabled}
-                className="bg-white"
+                className="bg-card/60 border-border/60"
                 onKeyDown={(e) => {
                   if (e.key === "Enter" && isComplete) {
                     handleSubmit();

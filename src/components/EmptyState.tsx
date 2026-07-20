@@ -1,5 +1,5 @@
 /**
- * EmptyState - Beautiful empty state for the chat when no messages exist
+ * EmptyState - Mission-control empty state for the chat
  */
 
 import { useState, useEffect } from "react";
@@ -12,22 +12,22 @@ const CAPABILITIES = [
   {
     icon: <Code className="w-4 h-4" />,
     text: "Write Luau scripts",
-    color: "text-blue-500",
+    color: "text-lime",
   },
   {
     icon: <Wand2 className="w-4 h-4" />,
     text: "Create & modify instances",
-    color: "text-purple-500",
+    color: "text-leaf",
   },
   {
     icon: <Search className="w-4 h-4" />,
     text: "Find free models",
-    color: "text-green-500",
+    color: "text-primary",
   },
   {
     icon: <Bot className="w-4 h-4" />,
     text: "Debug & optimize",
-    color: "text-orange-500",
+    color: "text-brick",
   },
 ];
 
@@ -49,7 +49,6 @@ export function EmptyState({ className }: EmptyStateProps) {
   const [charIndex, setCharIndex] = useState(0);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Typewriter effect
   useEffect(() => {
     const currentExample = TYPING_EXAMPLES[exampleIndex];
 
@@ -87,32 +86,32 @@ export function EmptyState({ className }: EmptyStateProps) {
         className
       )}
     >
-      {/* Animated logo */}
-      <div className="relative mb-8">
+      <div className="relative mb-8 animate-float">
         <div className="absolute inset-0 animate-ping opacity-20">
           <LogoMark className="w-20 h-20" />
         </div>
-        <LogoMark className="w-20 h-20 relative" />
+        <div className="absolute -inset-4 rounded-3xl bg-primary/10 blur-xl animate-glow" />
+        <LogoMark className="w-20 h-20 relative glow-lime rounded-2xl" />
       </div>
 
-      {/* Title */}
-      <h1 className="text-3xl font-heading mb-2">What would you like to build?</h1>
+      <h1 className="text-3xl font-heading mb-2 text-gradient-hero">
+        What would you like to build?
+      </h1>
       <p className="text-muted-foreground mb-8 max-w-md">
-        <span className="font-logo">{BRAND.name}</span> can help you create,
-        modify, and debug your Roblox game with skills-powered AI assistance.
+        <span className="font-logo text-cream">{BRAND.name}</span> can help you create,
+        modify, and debug your Roblox game — like having a co-builder on standby.
       </p>
 
-      {/* Capabilities */}
       <div className="flex flex-wrap justify-center gap-3 mb-8">
         {CAPABILITIES.map((cap, idx) => (
           <div
             key={idx}
             className={cn(
-              "flex items-center gap-2 px-3 py-1.5 rounded-full bg-muted/50 text-sm",
-              "animate-fade-in opacity-0",
+              "flex items-center gap-2 px-3 py-1.5 rounded-full glass text-sm hover-lift",
+              "animate-pop-in opacity-0",
               cap.color
             )}
-            style={{ animationDelay: `${idx * 100}ms`, animationFillMode: "forwards" }}
+            style={{ animationDelay: `${idx * 80}ms`, animationFillMode: "forwards" }}
           >
             {cap.icon}
             <span className="text-foreground">{cap.text}</span>
@@ -120,24 +119,22 @@ export function EmptyState({ className }: EmptyStateProps) {
         ))}
       </div>
 
-      {/* Typewriter suggestion */}
       <div className="relative max-w-sm w-full">
         <div className="absolute -top-6 left-1/2 -translate-x-1/2">
-          <Sparkles className="w-4 h-4 text-amber-500 animate-pulse" />
+          <Sparkles className="w-4 h-4 text-primary animate-pulse" />
         </div>
-        <div className="bg-muted/30 border rounded-xl px-4 py-3 text-left">
+        <div className="glass rounded-xl px-4 py-3 text-left border border-primary/20">
           <p className="text-sm text-muted-foreground mb-1">Try asking:</p>
-          <p className="text-base min-h-[1.5rem]">
+          <p className="text-base min-h-[1.5rem] text-cream">
             {typingText}
-            <span className="animate-pulse">|</span>
+            <span className="animate-pulse text-primary">|</span>
           </p>
         </div>
       </div>
 
-      {/* Scroll hint */}
       <div className="mt-8 flex flex-col items-center gap-2 text-muted-foreground animate-bounce">
-        <span className="text-xs">Type below to get started</span>
-        <ArrowDown className="w-4 h-4" />
+        <span className="text-xs tracking-wide uppercase">Type below to launch</span>
+        <ArrowDown className="w-4 h-4 text-primary" />
       </div>
     </div>
   );

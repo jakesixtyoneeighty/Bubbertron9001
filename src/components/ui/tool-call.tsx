@@ -46,31 +46,31 @@ export function ToolCall({
       icon: <Loader variant="circular" size="sm" />,
       label: "Waiting...",
       color: "text-muted-foreground",
-      bgColor: "bg-muted/50",
+      bgColor: "bg-muted/40 border-border/60",
     },
     running: {
       icon: <Loader variant="circular" size="sm" />,
       label: "Running...",
       color: "text-primary",
-      bgColor: "bg-primary/5",
+      bgColor: "bg-primary/10 border-primary/25 animate-glow",
     },
     waiting: {
       icon: <HelpCircle className="w-4 h-4" />,
       label: "Waiting for response...",
-      color: "text-amber-600",
-      bgColor: "bg-amber-50",
+      color: "text-amber-300",
+      bgColor: "bg-amber-400/10 border-amber-400/25",
     },
     complete: {
       icon: <Check className="w-4 h-4" />,
       label: "Complete",
-      color: "text-green-600",
-      bgColor: "bg-green-50",
+      color: "text-primary",
+      bgColor: "bg-primary/10 border-primary/20",
     },
     error: {
       icon: <X className="w-4 h-4" />,
       label: "Error",
-      color: "text-red-600",
-      bgColor: "bg-red-50",
+      color: "text-brick",
+      bgColor: "bg-destructive/15 border-destructive/30",
     },
   };
 
@@ -79,7 +79,7 @@ export function ToolCall({
   return (
     <div
       className={cn(
-        "rounded-xl border transition-all",
+        "rounded-xl border transition-all tool-call-enter hover:border-primary/30",
         bgColor,
         className
       )}
@@ -146,10 +146,10 @@ export function ToolCall({
           {/* Error */}
           {status === "error" && error && (
             <div className="space-y-1.5">
-              <p className="text-xs font-medium text-red-600 uppercase tracking-wide">
+              <p className="text-xs font-medium text-brick uppercase tracking-wide">
                 Error
               </p>
-              <pre className="text-xs bg-red-50 text-red-700 rounded-lg p-3 overflow-x-auto border border-red-200">
+              <pre className="text-xs bg-destructive/20 text-red-200 rounded-lg p-3 overflow-x-auto border border-destructive/30">
                 {error}
               </pre>
             </div>
