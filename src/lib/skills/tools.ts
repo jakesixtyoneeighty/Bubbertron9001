@@ -4,7 +4,7 @@ import { SKILL_NAMES } from "./catalog"
 import { loadSkill, searchSkills } from "./registry"
 
 export const skill_search = tool({
-  description: `Search Bubberton9001's compact Roblox skill catalog.
+  description: `Search bubbertron9001's compact Roblox skill catalog.
 
 Use this before solving a Roblox task when the exact skill is not already known.
 The result contains exact allowlisted names accepted by skill_load, without loading

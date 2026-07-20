@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { http, HttpResponse } from "msw";
 import { server } from "@/test/setup";
 import {
@@ -73,6 +73,10 @@ const mockProvidersData: ProvidersData = {
 };
 
 describe("Models Fetcher", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   describe("fetchAllModels", () => {
     it("should fetch models from models.dev", async () => {
       server.use(
@@ -126,6 +130,21 @@ describe("Models Fetcher", () => {
       expect(cached).not.toBeNull();
       expect(cached!.data).toEqual(mockProvidersData);
       expect(cached!.timestamp).toBeDefined();
+    });
+
+    it("does not fail when the optional cache exceeds storage quota", () => {
+      const setItemSpy = vi.spyOn(localStorage, "setItem").mockImplementation(() => {
+        throw new DOMException("Storage quota exceeded", "QuotaExceededError");
+      });
+      const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+      expect(() => saveModelsToCache(mockProvidersData)).not.toThrow();
+      expect(console.warn).toHaveBeenCalledWith(
+        "[Models] Model cache is unavailable:",
+        expect.any(Object),
+      );
+      setItemSpy.mockRestore();
+      warnSpy.mockRestore();
     });
 
     it("should validate fresh cache", () => {

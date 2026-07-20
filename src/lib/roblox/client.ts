@@ -2,13 +2,13 @@
  * HTTP Client for Roblox Studio communication via Bridge Server
  *
  * The bridge server runs on localhost:3001 and acts as an intermediary
- * between Bubberton9001 and the Roblox Studio plugin.
+ * between bubbertron9001 and the Roblox Studio plugin.
  */
 
 import { authenticatedLocalFetch } from "@/lib/local-bridge"
 
 const BRIDGE_URL = "http://localhost:3001"
-const BRIDGE_NAMESPACE = "bubberton9001"
+const BRIDGE_NAMESPACE = "bubbertron9001"
 const TIMEOUT_MS = 15000
 
 export type StudioResponse<T> = { success: true; data: T } | { success: false; error: string }
@@ -107,11 +107,11 @@ export function notConnectedError(): string {
   return `Roblox Studio is not connected.
 
 To use Roblox Studio tools:
-1. Make sure Bubberton9001 desktop is running (it starts the bridge server)
+1. Make sure bubbertron9001 desktop is running (it starts the bridge server)
 2. Open Roblox Studio
 3. Use Install Automatically or Download Paired Plugin in the desktop app
 4. Enable the plugin in Studio
-5. The plugin will automatically connect to Bubberton9001
+5. The plugin will automatically connect to bubbertron9001
 
-You can check the connection status in the Bubberton9001 toolbar in Studio.`
+You can check the connection status in the bubbertron9001 toolbar in Studio.`
 }

@@ -1,11 +1,11 @@
-//! Bridge server for Bubberton9001 <-> Roblox Studio plugin communication.
+//! Bridge server for bubbertron9001 <-> Roblox Studio plugin communication.
 //!
 //! The Roblox Studio plugin cannot receive incoming HTTP requests, only make them.
 //! This bridge server acts as an intermediary:
 //!
-//! 1. Bubberton9001 tools POST requests to `/bubberton9001/request`
-//! 2. Studio plugin polls `/bubberton9001/poll` for pending requests
-//! 3. Studio plugin responds to `/bubberton9001/respond` with results
+//! 1. bubbertron9001 tools POST requests to `/bubbertron9001/request`
+//! 2. Studio plugin polls `/bubbertron9001/poll` for pending requests
+//! 3. Studio plugin responds to `/bubbertron9001/respond` with results
 //! 4. The original request resolves with the result
 //!
 //! The legacy `/stud/*` endpoints remain aliases during migration.
@@ -33,7 +33,8 @@ const MAX_SESSION_CONTROL_BYTES: u64 = 4 * 1024;
 const MAX_REQUEST_PATH_BYTES: usize = 256;
 const MAX_REQUEST_ID_BYTES: usize = 128;
 const MAX_SESSION_ID_BYTES: usize = 128;
-const PAIRING_SECRET_HEADER: &str = "x-bubberton9001-secret";
+const PAIRING_SECRET_HEADER: &str = "x-bubbertron9001-secret";
+const PREVIOUS_PAIRING_SECRET_HEADER: &str = "x-bubberton9001-secret";
 
 // Global storage for OAuth callback data
 lazy_static::lazy_static! {
@@ -308,7 +309,20 @@ fn with_state(
 }
 
 fn bridge_namespace() -> impl Filter<Extract = (), Error = warp::Rejection> + Clone {
-    warp::path("bubberton9001").or(warp::path("stud")).unify()
+    warp::path("bubbertron9001")
+        .or(warp::path("bubberton9001"))
+        .unify()
+        .or(warp::path("stud"))
+        .unify()
+}
+
+fn pairing_secret_header(
+) -> impl Filter<Extract = (Option<String>,), Error = warp::Rejection> + Clone {
+    warp::header::optional::<String>(PAIRING_SECRET_HEADER)
+        .and(warp::header::optional::<String>(
+            PREVIOUS_PAIRING_SECRET_HEADER,
+        ))
+        .map(|current: Option<String>, previous: Option<String>| current.or(previous))
 }
 
 fn cors() -> warp::cors::Builder {
@@ -326,7 +340,8 @@ fn cors() -> warp::cors::Builder {
             "Content-Type",
             "Authorization",
             "ChatGPT-Account-Id",
-            "X-Bubberton9001-Secret",
+            "X-bubbertron9001-Secret",
+            "X-bubberton9001-Secret",
         ])
 }
 
@@ -359,16 +374,16 @@ pub async fn start_bridge_server() {
         .and(warp::path("status"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(pairing_secret_header())
         .and(with_state(state.clone()))
         .map(status_reply);
 
-    // Request endpoint - Bubberton9001 sends requests here
+    // Request endpoint - bubbertron9001 sends requests here
     let request = bridge_namespace()
         .and(warp::path("request"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(pairing_secret_header())
         .and(warp::body::content_length_limit(MAX_BRIDGE_REQUEST_BYTES))
         .and(warp::body::json())
         .and(with_state(state.clone()))
@@ -379,7 +394,7 @@ pub async fn start_bridge_server() {
         .and(warp::path("poll"))
         .and(warp::path::end())
         .and(warp::get())
-        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(pairing_secret_header())
         .and(warp::query::<PollQuery>())
         .and(with_state(state.clone()))
         .map(
@@ -392,7 +407,7 @@ pub async fn start_bridge_server() {
                             session_conflict: false,
                             pairing_error: true,
                             message: Some(
-                                "Studio plugin pairing failed. Reinstall it from Bubberton9001."
+                                "Studio plugin pairing failed. Reinstall it from bubbertron9001."
                                     .to_string(),
                             ),
                         }),
@@ -423,7 +438,7 @@ pub async fn start_bridge_server() {
                             session_conflict: true,
                             pairing_error: false,
                             message: Some(
-                                "Another Roblox Studio window is connected to Bubberton9001."
+                                "Another Roblox Studio window is connected to bubbertron9001."
                                     .to_string(),
                             ),
                         }),
@@ -458,7 +473,7 @@ pub async fn start_bridge_server() {
         .and(warp::path("respond"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(pairing_secret_header())
         .and(warp::body::content_length_limit(MAX_BRIDGE_RESPONSE_BYTES))
         .and(warp::body::json())
         .and(with_state(state.clone()))
@@ -523,7 +538,7 @@ pub async fn start_bridge_server() {
         .and(warp::path("disconnect"))
         .and(warp::path::end())
         .and(warp::post())
-        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(pairing_secret_header())
         .and(warp::body::content_length_limit(MAX_SESSION_CONTROL_BYTES))
         .and(warp::body::json())
         .and(with_state(state.clone()))
@@ -561,10 +576,10 @@ pub async fn start_bridge_server() {
         .with(cors());
 
     println!(
-        "[Bubberton9001 Bridge] Starting on http://localhost:{}",
+        "[bubbertron9001 Bridge] Starting on http://localhost:{}",
         BRIDGE_PORT
     );
-    println!("[Bubberton9001 Bridge] Waiting for the Studio plugin to connect...");
+    println!("[bubbertron9001 Bridge] Waiting for the Studio plugin to connect...");
 
     // Spawn cleanup task
     let cleanup_state = state.clone();
@@ -590,7 +605,7 @@ pub async fn start_bridge_server() {
         }
         Err(e) => {
             eprintln!(
-                "[Bubberton9001 Bridge] Could not bind port {} ({}); refusing to trust the unknown listener",
+                "[bubbertron9001 Bridge] Could not bind port {} ({}); refusing to trust the unknown listener",
                 BRIDGE_PORT, e
             );
         }
@@ -795,13 +810,13 @@ async fn start_oauth_server() {
     // Poll endpoint - frontend polls this to get the OAuth callback data
     let poll = warp::path!("auth" / "poll")
         .and(warp::get())
-        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(pairing_secret_header())
         .map(oauth_poll_reply);
 
     // Clear endpoint - frontend calls this after successfully processing the callback
     let clear = warp::path!("auth" / "clear")
         .and(warp::post())
-        .and(warp::header::optional::<String>(PAIRING_SECRET_HEADER))
+        .and(pairing_secret_header())
         .map(oauth_clear_reply);
 
     let oauth_routes = callback.or(poll).or(clear).with(cors());
@@ -810,7 +825,7 @@ async fn start_oauth_server() {
     match tokio::net::TcpListener::bind(addr).await {
         Ok(listener) => {
             println!(
-                "[Bubberton9001 OAuth] Callback server on http://localhost:{}",
+                "[bubbertron9001 OAuth] Callback server on http://localhost:{}",
                 OAUTH_PORT
             );
             warp::serve(oauth_routes)
@@ -819,7 +834,7 @@ async fn start_oauth_server() {
         }
         Err(e) => {
             println!(
-                "[Bubberton9001 OAuth] Port {} already in use ({})",
+                "[bubbertron9001 OAuth] Port {} already in use ({})",
                 OAUTH_PORT, e
             );
         }
@@ -1037,7 +1052,11 @@ mod tests {
             .and(warp::path::end())
             .map(warp::reply);
 
-        for path in ["/bubberton9001/status", "/stud/status"] {
+        for path in [
+            "/bubbertron9001/status",
+            "/bubberton9001/status",
+            "/stud/status",
+        ] {
             let response = warp::test::request().path(path).reply(&route).await;
             assert_eq!(response.status(), warp::http::StatusCode::OK);
         }

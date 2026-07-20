@@ -1,6 +1,6 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
-const BRIDGE_AUTH_HEADER = "X-Bubberton9001-Secret";
+const BRIDGE_AUTH_HEADER = "X-bubbertron9001-Secret";
 const BRIDGE_TOKEN_PATTERN = /^[a-fA-F0-9]{64}$/;
 const LOCAL_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
 
@@ -11,7 +11,8 @@ function assertProtectedLocalUrl(input: string | URL | Request) {
   const url = new URL(rawUrl);
   const isBridgeRoute =
     url.port === "3001" &&
-    (url.pathname.startsWith("/bubberton9001/") ||
+    (url.pathname.startsWith("/bubbertron9001/") ||
+      url.pathname.startsWith("/bubberton9001/") ||
       url.pathname.startsWith("/stud/"));
   const isProtectedOAuthRoute =
     url.port === "1455" &&

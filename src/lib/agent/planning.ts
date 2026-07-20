@@ -187,7 +187,7 @@ workflow enters repair instead of claiming completion.`,
 
     if (!hasFreshStudioReadback(evidence)) {
       const mutation = evidence.lastMutation;
-      const message = `Studio verification is incomplete: ${mutation?.toolName || "a mutation"} succeeded, but no successful Studio readback started after it completed. Run roblox_get_script, roblox_get_children, roblox_get_properties, roblox_search, or roblox_get_selection, then retry agent_finish_plan.`;
+      const message = `Studio verification is incomplete: ${mutation?.toolName || "a mutation"} succeeded, but no successful Studio readback started after it completed. Run a relevant structured readback such as roblox_get_script, roblox_get_children, roblox_get_properties, roblox_search, roblox_get_selection, or roblox_get_playtest_state, then retry agent_finish_plan. Recent logs are diagnostic context and cannot verify a mutation by themselves.`;
       useAgentStore.getState().requestRepair(message);
       return {
         finished: false,

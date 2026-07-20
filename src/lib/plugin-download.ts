@@ -1,10 +1,10 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
 
 export const STUDIO_PLUGIN_FILENAME =
-  "bubberton9001-bridge.server.lua";
+  "bubbertron9001-bridge.server.lua";
 
 const PAIRING_SECRET_PLACEHOLDER =
-  "__BUBBERTON9001_PAIRING_SECRET__";
+  "__bubbertron9001_PAIRING_SECRET__";
 const PAIRING_ASSIGNMENT =
   /local PAIRING_SECRET = "[a-fA-F0-9]{64}"/g;
 
@@ -47,7 +47,7 @@ function validatePairedPluginSource(
 export async function getPairedPluginSource(): Promise<PairedPluginSource> {
   if (!isTauri()) {
     throw new Error(
-      "Paired plugin downloads are only available in the Bubberton9001 desktop app. Do not copy the raw repository template.",
+      "Paired plugin downloads are only available in the bubbertron9001 desktop app. Do not copy the raw repository template.",
     );
   }
 

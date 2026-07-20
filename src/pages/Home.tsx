@@ -20,12 +20,12 @@ import { BotAvatar, UserAvatar } from "@/components/icons/Avatars";
 import { Icon } from "@/components/icons/Icon";
 import { ModelSelector } from "@/components/chat/ModelSelector";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
-import { SettingsPanel } from "@/components/SettingsPanel";
 import { ContextChips, ChipAction } from "@/components/chat/ContextChips";
 import { QuestionPrompt } from "@/components/chat/QuestionPrompt";
 import { InstancePicker } from "@/components/chat/InstancePicker";
 import { PlanView } from "@/components/chat/PlanView";
 import { SourceList } from "@/components/chat/SourceList";
+import { PlaytestFix } from "@/components/chat/PlaytestFix";
 import { ChatActions } from "@/components/QuickActions";
 import { CommandPalette } from "@/components/CommandPalette";
 import { EmptyState } from "@/components/EmptyState";
@@ -47,9 +47,9 @@ import { improvePrompt } from "@/lib/ai/prompt-improver";
 import { downloadPairedStudioPlugin } from "@/lib/plugin-download";
 import { cn } from "@/lib/utils";
 import { playSound, isMuted, toggleMuted } from "@/lib/sounds";
-import { SparkleField } from "@/components/effects/SparkleField";
+import { AuroraBackground } from "@/components/effects/AuroraBackground";
 import { ConfettiBurst } from "@/components/effects/ConfettiBurst";
-import { ArrowUp, Square, CheckCircle2, Download, FolderOpen, RefreshCw, Box, FileText, Globe, Play, ListTodo, Settings, Sparkles, Volume2, VolumeX } from "lucide-react";
+import { ArrowUp, Square, CheckCircle2, Download, FolderOpen, RefreshCw, Box, FileText, Globe, Play, ListTodo, Sparkles, Volume2, VolumeX } from "lucide-react";
 
 const SUGGESTIONS = [
   // Gameplay systems
@@ -82,20 +82,6 @@ const SUGGESTIONS = [
   "Add achievements that unlock badges",
   "Build a trading system between players",
 ];
-
-// Animated aurora backdrop rendered behind every screen
-function AuroraBackground() {
-  return (
-    <div className="fixed inset-0 overflow-hidden pointer-events-none" aria-hidden="true">
-      <div className="aurora-blob aurora-1" />
-      <div className="aurora-blob aurora-2" />
-      <div className="aurora-blob aurora-3" />
-      <div className="absolute inset-0 bg-grid" />
-      <SparkleField count={32} />
-      <div className="absolute inset-0 bg-noise" />
-    </div>
-  );
-}
 
 // Mute/unmute button for the synthesized sound effects
 function SoundToggle() {
@@ -530,7 +516,7 @@ export function Home() {
 
     return () => {
       setAskUserHandler(null);
-      cancelPendingQuestions("Bubberton9001 closed the question");
+      cancelPendingQuestions("bubbertron9001 closed the question");
     };
   }, [setPendingQuestion, setQuestionResolver]);
 
@@ -558,10 +544,11 @@ export function Home() {
     }
   }, [input, isImproving, isStreaming]);
 
-  const handleSubmit = useCallback(async () => {
-    if (!input.trim() || isStreaming) return;
+  const handleSubmit = useCallback(async (override?: string) => {
+    const submittedInput = typeof override === "string" ? override : input;
+    if (!submittedInput.trim() || isStreaming) return;
 
-    const userMessage = input.trim();
+    const userMessage = submittedInput.trim();
     const requestChips = [...activeChips];
 
     // Build context prefix based on active chips
@@ -773,7 +760,7 @@ export function Home() {
             {/* Welcome message */}
             <div className="text-center space-y-4 animate-pop-in">
               <div className="inline-flex animate-float">
-                <LogoMark className="w-16 h-16 rounded-2xl glow-lime" />
+                <LogoMark className="w-24 h-24 glow-lime" />
               </div>
               <h1 className="text-4xl font-heading text-gradient-hero">
                 What would you like to build?
@@ -794,7 +781,7 @@ export function Home() {
               <PromptInput
                 value={input}
                 onValueChange={setInput}
-                onSubmit={handleSubmit}
+                onSubmit={() => void handleSubmit()}
                 isLoading={isStreaming}
                 className={cn(
                   "rounded-2xl glass-strong transition-shadow duration-300 focus-within:glow-lime",
@@ -862,7 +849,7 @@ export function Home() {
                         "h-9 w-9 rounded-xl",
                         input.trim() && !isStreaming && hasConfiguredProvider && "send-ready"
                       )}
-                      onClick={handleSubmit}
+                      onClick={() => void handleSubmit()}
                       disabled={!input.trim() || isStreaming || !hasConfiguredProvider}
                     >
                       {isStreaming ? (
@@ -889,18 +876,26 @@ export function Home() {
               ))}
             </div>
 
+            <div className="flex justify-center animate-slide-up stagger-4">
+              <PlaytestFix
+                onAnalyze={(prompt) => void handleSubmit(prompt)}
+                disabled={isStreaming || !hasConfiguredProvider}
+                studioConnected={isConnected}
+              />
+            </div>
+
             {/* Not configured warning */}
             {!hasConfiguredProvider && (
               <div className="text-center animate-fade-in">
                 <p className="text-sm text-amber-300">
                   <Icon name="key" size="sm" className="inline mr-1" />
-                  No API key configured.{" "}
+                  Sign in with ChatGPT or add an API key.{" "}
                   <SettingsDialog>
                     <button className="underline hover:no-underline text-primary">
                       Open settings
                     </button>
                   </SettingsDialog>{" "}
-                  to add one.
+                  to get started.
                 </p>
               </div>
             )}
@@ -927,6 +922,12 @@ export function Home() {
           <StatusBadge status={studioStatus} />
           <div className="h-4 w-px bg-border mx-1" />
           <SoundToggle />
+          <PlaytestFix
+            compact
+            onAnalyze={(prompt) => void handleSubmit(prompt)}
+            disabled={isStreaming || !hasConfiguredProvider}
+            studioConnected={isConnected}
+          />
           <ChatActions
             onClear={() => {
               playSound("click");
@@ -934,13 +935,7 @@ export function Home() {
             }}
             disabled={messages.length === 0 || isStreaming}
           />
-          <SettingsPanel
-            trigger={
-              <Button variant="ghost" size="icon" className="h-8 w-8">
-                <Settings className="w-4 h-4" />
-              </Button>
-            }
-          />
+          <SettingsDialog />
         </div>
       </header>
 
@@ -1086,7 +1081,7 @@ export function Home() {
           <PromptInput
             value={input}
             onValueChange={setInput}
-            onSubmit={handleSubmit}
+            onSubmit={() => void handleSubmit()}
             isLoading={isStreaming}
             className={cn(
               "rounded-2xl glass-strong transition-shadow duration-300 focus-within:glow-lime",
@@ -1161,7 +1156,7 @@ export function Home() {
                       "h-9 w-9 rounded-xl",
                       input.trim() && "send-ready"
                     )}
-                    onClick={handleSubmit}
+                    onClick={() => void handleSubmit()}
                     disabled={!input.trim()}
                   >
                     <ArrowUp className="h-4 w-4" />

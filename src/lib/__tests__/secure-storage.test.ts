@@ -108,6 +108,27 @@ describe("secure storage", () => {
     ).toBeNull();
   });
 
+  it("migrates the previous browser fallback after the name correction", async () => {
+    localStorage.setItem(
+      __secureStorageTestUtils.previousBrowserFallbackKey,
+      JSON.stringify({
+        [SECRET_KEYS.openaiApiKey]: "sk-before-name-fix",
+      }),
+    );
+
+    await initializeSecretStorage();
+
+    expect(getSecretValue(SECRET_KEYS.openaiApiKey)).toBe(
+      "sk-before-name-fix",
+    );
+    expect(
+      localStorage.getItem(__secureStorageTestUtils.previousBrowserFallbackKey),
+    ).toBeNull();
+    expect(
+      localStorage.getItem(__secureStorageTestUtils.browserFallbackKey),
+    ).toContain("sk-before-name-fix");
+  });
+
   it("migrates packaged-app secrets to the OS keychain and removes plaintext", async () => {
     setTauriRuntime(true);
     localStorage.setItem(

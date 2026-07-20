@@ -11,7 +11,11 @@ import {
   isAuthenticated,
 } from "@/lib/auth/codex";
 import { useModelsStore } from "./models";
-import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/config/brand";
+import {
+  LEGACY_STORAGE_KEYS,
+  PREVIOUS_STORAGE_KEYS,
+  STORAGE_KEYS,
+} from "@/config/brand";
 import { migrateStorageKey } from "@/lib/storage";
 import { authenticatedLocalFetch } from "@/lib/local-bridge";
 
@@ -39,6 +43,7 @@ interface AuthState {
   isOAuthAuthenticated: () => boolean;
 }
 
+migrateStorageKey(PREVIOUS_STORAGE_KEYS.authStore, STORAGE_KEYS.authStore);
 migrateStorageKey(LEGACY_STORAGE_KEYS.authStore, STORAGE_KEYS.authStore);
 
 const OAUTH_CALLBACK_BASE = "http://localhost:1455/auth";
@@ -57,7 +62,7 @@ async function clearOAuthCallbackServer() {
 export const useAuthStore = create<AuthState>()(
   persist(
     (set, get) => ({
-      authMethod: "api_key",
+      authMethod: "oauth",
       oauthAuth: getStoredAuth(),
       isLoggingIn: false,
       loginError: null,
@@ -118,7 +123,7 @@ export const useAuthStore = create<AuthState>()(
         useModelsStore.getState().clearModels();
         set({
           oauthAuth: null,
-          authMethod: "api_key",
+          authMethod: "oauth",
           loginError: null,
         });
       },

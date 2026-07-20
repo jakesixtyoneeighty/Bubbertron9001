@@ -9,15 +9,18 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import { Icon } from "@/components/icons/Icon";
 import { ProviderIcon } from "@/components/icons/ProviderIcon";
 import { Loader } from "@/components/ui/loader";
 import { useSettingsStore } from "@/stores/settings";
 import { useAuthStore } from "@/stores/auth";
 import { useModelsStore } from "@/stores/models";
+import { usePrereqStore } from "@/stores/prereq";
+import { useRobloxStore } from "@/stores/roblox";
 import { cn } from "@/lib/utils";
 import { BRAND } from "@/config/brand";
-import { LogOut, Sparkles, Key, Copy, Check, X, RefreshCw, Bug } from "lucide-react";
+import { LogOut, Sparkles, Key, Copy, Check, X, RefreshCw, Bug, PlugZap, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
 
 // Debug panel to show current auth/model status
@@ -121,7 +124,7 @@ function ApiKeyInput({ provider, label, placeholder }: ApiKeyInputProps) {
           <label className="text-sm font-medium">{label}</label>
         </div>
         {isConfigured && (
-          <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+          <span className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs text-primary">
             <Icon name="check" size="sm" />
             Configured
           </span>
@@ -235,13 +238,13 @@ function ChatGPTAuth() {
     <div className="space-y-3">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded-full bg-gradient-to-br from-[#10a37f] to-[#1a7f64] flex items-center justify-center">
-            <Sparkles className="w-3 h-3 text-white" />
+          <div className="flex h-5 w-5 items-center justify-center rounded-full border border-primary/30 bg-primary/15">
+            <Sparkles className="h-3 w-3 text-primary" />
           </div>
           <label className="text-sm font-medium">ChatGPT Plus/Pro</label>
         </div>
         {isAuthenticated && (
-          <span className="text-xs text-green-600 bg-green-50 px-2 py-0.5 rounded-full flex items-center gap-1">
+          <span className="flex items-center gap-1 rounded-full bg-primary/15 px-2 py-0.5 text-xs text-primary">
             <Icon name="check" size="sm" />
             Signed In
           </span>
@@ -253,23 +256,23 @@ function ChatGPTAuth() {
       </p>
 
       {loginError && (
-        <p className="text-xs text-red-600 bg-red-50 p-2 rounded-lg">
+        <p className="rounded-lg border border-destructive/35 bg-destructive/15 p-2 text-xs text-destructive-foreground">
           {loginError}
         </p>
       )}
 
       {isAuthenticated ? (
         <div className="space-y-2">
-          <div className="flex items-center justify-between p-3 bg-green-50 rounded-xl">
+          <div className="flex items-center justify-between rounded-xl border border-primary/20 bg-primary/10 p-3">
             <div className="flex items-center gap-2">
-              <div className="w-2 h-2 rounded-full bg-green-500" />
-              <span className="text-sm text-green-700">Connected to ChatGPT</span>
+              <div className="h-2 w-2 rounded-full bg-primary" />
+              <span className="text-sm text-primary">Connected to ChatGPT</span>
             </div>
             <Button
               variant="ghost"
               size="sm"
               onClick={() => void handleLogout()}
-              className="text-red-600 hover:text-red-700 hover:bg-red-50"
+              className="text-brick hover:bg-destructive/15 hover:text-destructive-foreground"
             >
               <LogOut className="w-4 h-4 mr-1" />
               Sign Out
@@ -334,7 +337,7 @@ function ChatGPTAuth() {
                   className="shrink-0 h-9 w-9 p-0 rounded-lg"
                 >
                   {copied ? (
-                    <Check className="w-4 h-4 text-green-600" />
+                    <Check className="h-4 w-4 text-primary" />
                   ) : (
                     <Copy className="w-4 h-4" />
                   )}
@@ -351,7 +354,7 @@ function ChatGPTAuth() {
         <Button 
           onClick={startLogin}
           disabled={isLoggingIn}
-          className="w-full rounded-xl bg-gradient-to-r from-[#10a37f] to-[#1a7f64] hover:from-[#0d8f6e] hover:to-[#166b55]"
+          className="w-full rounded-xl glow-lime"
         >
           <Sparkles className="w-4 h-4 mr-2" />
           Sign in with ChatGPT
@@ -382,7 +385,7 @@ function AuthMethodTabs() {
       >
         <Sparkles className="w-4 h-4" />
         ChatGPT Plus/Pro
-        {isOAuth && <span className="w-2 h-2 rounded-full bg-green-500" />}
+        {isOAuth && <span className="h-2 w-2 rounded-full bg-primary" />}
       </button>
       <button
         onClick={() => setAuthMethod("api_key")}
@@ -395,7 +398,7 @@ function AuthMethodTabs() {
       >
         <Key className="w-4 h-4" />
         API Keys
-        {hasKey && <span className="w-2 h-2 rounded-full bg-green-500" />}
+        {hasKey && <span className="h-2 w-2 rounded-full bg-primary" />}
       </button>
     </div>
   );
@@ -407,9 +410,19 @@ interface SettingsDialogProps {
 
 export function SettingsDialog({ children }: SettingsDialogProps) {
   const { authMethod } = useAuthStore();
+  const { appSettings, updateAppSettings, resetAppSettings } = useSettingsStore();
+  const studioStatus = useRobloxStore((state) => state.status);
+  const openSetup = usePrereqStore((state) => state.openWizard);
+  const [open, setOpen] = useState(false);
+  const studioConnected = studioStatus === "connected";
+
+  const handleOpenSetup = () => {
+    setOpen(false);
+    window.setTimeout(openSetup, 0);
+  };
 
   return (
-    <Dialog>
+    <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild aria-label="Open settings">
         {children || (
           <Button variant="ghost" size="icon" className="rounded-xl">
@@ -417,7 +430,7 @@ export function SettingsDialog({ children }: SettingsDialogProps) {
           </Button>
         )}
       </DialogTrigger>
-      <DialogContent className="sm:max-w-md rounded-2xl">
+      <DialogContent className="glass-strong max-h-[85vh] overflow-y-auto rounded-2xl border-primary/20 sm:max-w-lg">
         <DialogHeader>
           <DialogTitle className="text-xl">Settings</DialogTitle>
           <DialogDescription>
@@ -455,28 +468,95 @@ export function SettingsDialog({ children }: SettingsDialogProps) {
             <h3 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-3">
               Roblox Studio
             </h3>
-            <div className="flex items-center justify-between p-3 bg-muted/50 rounded-xl">
+            <div className="flex items-center justify-between rounded-xl border border-border bg-muted/40 p-3">
               <div className="flex items-center gap-2">
                 <div className={cn(
                   "w-2 h-2 rounded-full",
-                  "bg-muted-foreground" // Will change to green when connected
+                  studioConnected ? "bg-primary" : "bg-muted-foreground"
                 )} />
                 <span className="text-sm">Studio Connection</span>
               </div>
-              <span className="text-xs text-muted-foreground">
-                Not connected
+              <span className={cn(
+                "text-xs",
+                studioConnected ? "text-primary" : "text-muted-foreground",
+              )}>
+                {studioConnected ? "Connected" : "Not connected"}
               </span>
             </div>
             <p className="text-xs text-muted-foreground mt-2">
               Install the {BRAND.name} plugin in Roblox Studio to enable AI-powered editing.
             </p>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleOpenSetup}
+              className="mt-3 w-full gap-2"
+            >
+              <PlugZap className="h-4 w-4" />
+              Run guided setup
+            </Button>
+          </div>
+
+          <div className="space-y-3 border-t pt-4">
+            <h3 className="text-sm font-semibold uppercase tracking-wide text-muted-foreground">
+              Preferences
+            </h3>
+            <PreferenceToggle
+              label="Automatic planning"
+              description="Make a clear plan before larger Studio changes"
+              checked={appSettings.autoPlan}
+              onCheckedChange={(autoPlan) => updateAppSettings({ autoPlan })}
+            />
+            <PreferenceToggle
+              label="Confirm Studio changes"
+              description="Ask before B9 changes the open game"
+              checked={appSettings.confirmDestructiveActions}
+              onCheckedChange={(confirmDestructiveActions) =>
+                updateAppSettings({ confirmDestructiveActions })
+              }
+            />
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={resetAppSettings}
+              className="w-full gap-2 text-muted-foreground"
+            >
+              <RotateCcw className="h-3.5 w-3.5" />
+              Reset preferences
+            </Button>
           </div>
 
           {/* Debug Panel - shows auth status */}
-          <DebugPanel />
+          {import.meta.env.DEV && <DebugPanel />}
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function PreferenceToggle({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+}: {
+  label: string;
+  description: string;
+  checked: boolean;
+  onCheckedChange: (checked: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-xl bg-muted/30 p-3">
+      <div>
+        <p className="text-sm font-medium">{label}</p>
+        <p className="mt-0.5 text-xs text-muted-foreground">{description}</p>
+      </div>
+      <Switch
+        aria-label={label}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+      />
+    </div>
   );
 }
 

@@ -1,8 +1,8 @@
-# Bubberton9001 Agent Runtime — Implementation Status
+# bubbertron9001 Agent Runtime — Implementation Status
 
 ## Objective
 
-Bubberton9001 (B9) is a skills-powered Roblox Studio agent. The upgraded
+bubbertron9001 (B9) is a skills-powered Roblox Studio agent. The upgraded
 runtime should turn a goal into a bounded workflow:
 
 1. understand the request and inspect relevant Studio state;
@@ -13,7 +13,7 @@ runtime should turn a goal into a bounded workflow:
 6. verify the result with read-back evidence;
 7. repair failures before reporting completion.
 
-Repository: <https://github.com/jakesixtyoneeighty/stud>
+Repository: <https://github.com/jakesixtyoneeighty/bubbertron9001>
 
 Skills source: <https://github.com/jakesixtyoneeighty/roblox-brain>
 
@@ -33,20 +33,21 @@ License: GNU AGPL-3.0 with the additional notice terms in `LICENSE`
          └── OpenAI / Anthropic / ChatGPT subscription models
 ```
 
-The primary bridge namespace is `/bubberton9001/*`. The legacy `/stud/*`
-namespace remains as a compatibility alias during migration.
+The primary bridge namespace is `/bubbertron9001/*`. The former
+`/bubberton9001/*` and older `/stud/*` namespaces remain compatibility aliases
+during migration.
 
 ## Completed Upgrade
 
 ### Product identity and compatibility
 
 - Product name, window metadata, plugin identity, UI copy, and package metadata
-  use **Bubberton9001** or compact **B9**.
+  use **bubbertron9001** or compact **B9**.
 - Existing storage and bridge identifiers are migrated instead of silently
   discarding user settings or breaking older clients.
 - The legacy Tauri bundle identifier is intentionally retained so an installed
   Stud app upgrades in place and can migrate its existing WebView storage.
-- The Studio plugin and desktop app use the same Bubberton9001 naming.
+- The Studio plugin and desktop app use the same bubbertron9001 naming.
 
 ### Progressive Roblox skills
 
@@ -73,6 +74,26 @@ namespace remains as a compatibility alias during migration.
 - Planning state is visible in the chat UI.
 - Automatic planning is enabled by default and can be changed in Settings.
 
+### Runtime playtest diagnostics
+
+- `roblox_get_playtest_state` reads Studio's current edit, running, or paused
+  state without changing it.
+- `roblox_get_recent_logs` reads a bounded diagnostic buffer seeded from Studio
+  Output and updated live during playtests.
+- Log messages are capped, redacted, filtered for bridge noise, treated as
+  untrusted evidence, and never used as authoritative verification by themselves.
+- The visible **Playtest & Fix** guide tells a young builder exactly when to
+  press Play, try the game, and ask B9 to inspect the result.
+
+### Guided Mac setup
+
+- First launch uses four clickable steps for Studio, the securely paired plugin,
+  ChatGPT sign-in, and the first live connection; no Terminal commands appear.
+- B9 can open Roblox Studio, install or migrate the plugin, recheck each step,
+  and restart itself when its local connector needs recovery.
+- Settings can reopen the guide as a Setup Doctor after onboarding.
+- The sign-in flow, wizard, and Studio plugin use the same Forest Glass colors.
+
 ### Current-information research
 
 - OpenAI, Anthropic, and ChatGPT subscription paths expose web search.
@@ -98,8 +119,11 @@ namespace remains as a compatibility alias during migration.
 - Provider/tool execution, Markdown rendering, and syntax highlighting are
   loaded on demand; the initial application chunk is about 38% smaller than
   the pre-optimization build.
-- GitHub Actions runs frontend, Rust, dependency, skill, and plugin-integrity
-  gates on every push and pull request.
+- Local release scripts run frontend, Rust, skill, and plugin-integrity gates;
+  hosted release automation remains future work.
+- The Mac package script temporarily disables Cargo release stripping to avoid
+  [rust-lang/rust#157750](https://github.com/rust-lang/rust/issues/157750) on
+  macOS 27; remove that workaround after the fixed Rust toolchain is adopted.
 
 ## Verification Gates
 
@@ -115,15 +139,18 @@ Every release should satisfy the following:
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets --all-features -- -D warnings`
 - a live smoke test:
   1. launch the Tauri app;
-  2. connect the Bubberton9001 Studio plugin;
+  2. connect the bubbertron9001 Studio plugin;
   3. inspect the game tree;
   4. run one planned mutation;
   5. confirm read-back verification and an undo waypoint;
   6. run one current-information web search and inspect its citations.
+  7. press Play in Studio and confirm B9 can read the playtest state and a
+     bounded set of recent Output diagnostics.
 
 ## Remaining Product Priorities
 
-1. Run and automate an end-to-end bridge test against the real Studio plugin.
+1. Run and automate an end-to-end bridge and playtest test against the real
+   Studio plugin.
 2. Add live provider-contract canaries for OpenAI, Anthropic, and ChatGPT
    subscription tool loops without placing credentials in ordinary CI.
 3. Add cancellable or isolated execution before treating active arbitrary Luau
@@ -133,8 +160,8 @@ Every release should satisfy the following:
    and confirmation boundaries.
 5. Add parallel sub-agents only after plan ownership, cancellation, and merge
    behavior have deterministic tests.
-6. Package signed release artifacts and document upgrade migration from the
-   former product identity.
+6. Add Developer ID signing, Apple notarization, universal Mac artifacts, and
+   automatic updates once the release credentials and stable release host exist.
 
 ## Definition of Done
 

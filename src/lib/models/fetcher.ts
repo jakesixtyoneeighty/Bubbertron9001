@@ -3,7 +3,12 @@
  * Fetches from models.dev (same source as opencode fork)
  */
 
-import { BRAND, LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/config/brand";
+import {
+  BRAND,
+  LEGACY_STORAGE_KEYS,
+  PREVIOUS_STORAGE_KEYS,
+  STORAGE_KEYS,
+} from "@/config/brand";
 import { appFetch } from "@/lib/http";
 import { migrateStorageKey } from "@/lib/storage";
 import type { ProvidersData, DisplayModel, Model } from "./types";
@@ -23,6 +28,7 @@ interface ModelsCache {
 
 const CACHE_VERSION = 1;
 
+migrateStorageKey(PREVIOUS_STORAGE_KEYS.models, STORAGE_KEYS.models);
 migrateStorageKey(LEGACY_STORAGE_KEYS.models, STORAGE_KEYS.models);
 
 /**
@@ -64,7 +70,22 @@ export function saveModelsToCache(data: ProvidersData): void {
     timestamp: Date.now(),
     version: CACHE_VERSION,
   };
-  localStorage.setItem(CACHE_KEY, JSON.stringify(cache));
+  const serialized = JSON.stringify(cache);
+  try {
+    localStorage.setItem(CACHE_KEY, serialized);
+  } catch (firstError) {
+    // Model metadata is disposable. Remove only this cache and retry once so
+    // a stale oversized payload cannot turn a successful fetch into app error.
+    localStorage.removeItem(CACHE_KEY);
+    try {
+      localStorage.setItem(CACHE_KEY, serialized);
+    } catch (retryError) {
+      console.warn("[Models] Model cache is unavailable:", {
+        firstError,
+        retryError,
+      });
+    }
+  }
 }
 
 /**

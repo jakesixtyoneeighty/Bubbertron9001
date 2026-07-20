@@ -84,7 +84,8 @@ body {
 
 /* Font utility classes */
 .font-logo {
-  font-family: 'Raster', system-ui, sans-serif;
+  font-family: 'Outfit', system-ui, sans-serif;
+  font-weight: 800;
 }
 
 .font-heading {

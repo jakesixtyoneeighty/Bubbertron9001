@@ -5,10 +5,12 @@
  */
 
 import { create } from "zustand";
+import { persist } from "zustand/middleware";
 import { invoke } from "@tauri-apps/api/core";
 import { isBridgeRunning, isStudioConnected } from "@/lib/roblox/client";
 import { useSettingsStore } from "./settings";
 import { isAuthenticated } from "@/lib/auth/codex";
+import { STORAGE_KEYS } from "@/config/brand";
 
 export interface PrereqCheck {
   id: string;
@@ -27,8 +29,11 @@ interface PrereqStore {
   isChecking: boolean;
   hasChecked: boolean;
   showWizard: boolean;
+  setupCompleted: boolean;
 
-  runAllChecks: () => Promise<void>;
+  runAllChecks: (forceOpen?: boolean) => Promise<void>;
+  openWizard: () => void;
+  completeSetup: () => void;
   dismissWizard: () => void;
   getFailedChecks: () => PrereqCheck[];
   getWarningChecks: () => PrereqCheck[];
@@ -42,9 +47,9 @@ const initialChecks: PrereqCheck[] = [
     status: "pending",
   },
   {
-    id: "bubberton9001-plugin",
-    name: "Bubberton9001 Plugin",
-    description: "The Bubberton9001 bridge plugin must be installed in Studio",
+    id: "bubbertron9001-plugin",
+    name: "bubbertron9001 Plugin",
+    description: "The bubbertron9001 bridge plugin must be installed in Studio",
     status: "pending",
   },
   {
@@ -56,7 +61,7 @@ const initialChecks: PrereqCheck[] = [
   {
     id: "bridge-server",
     name: "Bridge Server",
-    description: "The bridge server connects Bubberton9001 to Roblox Studio",
+    description: "The bridge server connects bubbertron9001 to Roblox Studio",
     status: "pending",
   },
   {
@@ -67,16 +72,23 @@ const initialChecks: PrereqCheck[] = [
   },
 ];
 
-export const usePrereqStore = create<PrereqStore>((set, get) => ({
-  checks: initialChecks,
-  isChecking: false,
-  hasChecked: false,
-  showWizard: false,
+export const usePrereqStore = create<PrereqStore>()(
+  persist(
+    (set, get) => ({
+      checks: initialChecks,
+      isChecking: false,
+      hasChecked: false,
+      showWizard: false,
+      setupCompleted: false,
 
-  runAllChecks: async () => {
-    set({ isChecking: true });
+      runAllChecks: async (forceOpen = false) => {
+        set((state) => ({
+          isChecking: true,
+          showWizard:
+            forceOpen || !state.setupCompleted || state.showWizard,
+        }));
 
-    const checks = [...initialChecks];
+        const checks = initialChecks.map((check) => ({ ...check }));
 
     // Helper to update a specific check
     const updateCheck = (id: string, update: Partial<PrereqCheck>) => {
@@ -107,29 +119,29 @@ export const usePrereqStore = create<PrereqStore>((set, get) => ({
     }
     set({ checks: [...checks] });
 
-    // 2. Check Bubberton9001 plugin installation
-    updateCheck("bubberton9001-plugin", { status: "checking" });
+    // 2. Check bubbertron9001 plugin installation
+    updateCheck("bubbertron9001-plugin", { status: "checking" });
     set({ checks: [...checks] });
 
     try {
       const pluginStatus = await invoke<{ installed: boolean; is_current_version: boolean }>("check_plugin_installed");
       if (pluginStatus.installed && pluginStatus.is_current_version) {
-        updateCheck("bubberton9001-plugin", { status: "passed", message: "Plugin is installed and up to date" });
+        updateCheck("bubbertron9001-plugin", { status: "passed", message: "Plugin is installed and up to date" });
       } else if (pluginStatus.installed) {
-        updateCheck("bubberton9001-plugin", {
+        updateCheck("bubbertron9001-plugin", {
           status: "warning",
           message: "Plugin update available",
           action: { label: "Update Plugin", handler: "install-plugin" },
         });
       } else {
-        updateCheck("bubberton9001-plugin", {
+        updateCheck("bubbertron9001-plugin", {
           status: "failed",
           message: "Plugin not installed",
           action: { label: "Install Plugin", handler: "install-plugin" },
         });
       }
     } catch {
-      updateCheck("bubberton9001-plugin", {
+      updateCheck("bubbertron9001-plugin", {
         status: "warning",
         message: "Could not check plugin status",
         action: { label: "Install Plugin", handler: "install-plugin" },
@@ -197,26 +209,42 @@ export const usePrereqStore = create<PrereqStore>((set, get) => ({
     set({ checks: [...checks] });
 
     // Determine if we need to show wizard
-    const failedChecks = checks.filter((c) => c.status === "failed");
-    const showWizard = failedChecks.length > 0;
+        const failedChecks = checks.filter((c) => c.status === "failed");
+        const showWizard =
+          forceOpen || !get().setupCompleted || failedChecks.length > 0;
 
-    set({
-      checks,
-      isChecking: false,
-      hasChecked: true,
-      showWizard,
-    });
-  },
+        set({
+          checks,
+          isChecking: false,
+          hasChecked: true,
+          showWizard,
+        });
+      },
 
-  dismissWizard: () => {
-    set({ showWizard: false });
-  },
+      openWizard: () => {
+        set({ showWizard: true });
+        void get().runAllChecks(true);
+      },
 
-  getFailedChecks: () => {
-    return get().checks.filter((c) => c.status === "failed");
-  },
+      completeSetup: () => {
+        set({ setupCompleted: true, showWizard: false });
+      },
 
-  getWarningChecks: () => {
-    return get().checks.filter((c) => c.status === "warning");
-  },
-}));
+      dismissWizard: () => {
+        set({ showWizard: false });
+      },
+
+      getFailedChecks: () => {
+        return get().checks.filter((c) => c.status === "failed");
+      },
+
+      getWarningChecks: () => {
+        return get().checks.filter((c) => c.status === "warning");
+      },
+    }),
+    {
+      name: STORAGE_KEYS.setup,
+      partialize: (state) => ({ setupCompleted: state.setupCompleted }),
+    },
+  ),
+);

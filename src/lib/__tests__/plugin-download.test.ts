@@ -73,7 +73,7 @@ describe("paired Studio plugin download", () => {
     invokeMock.mockResolvedValueOnce({
       filename: STUDIO_PLUGIN_FILENAME,
       source:
-        'local PAIRING_SECRET = "__BUBBERTON9001_PAIRING_SECRET__"',
+        'local PAIRING_SECRET = "__bubbertron9001_PAIRING_SECRET__"',
     });
     await expect(getPairedPluginSource()).rejects.toThrow(
       "unpaired plugin template",
@@ -92,7 +92,7 @@ describe("paired Studio plugin download", () => {
     isTauriMock.mockReturnValue(false);
 
     await expect(getPairedPluginSource()).rejects.toThrow(
-      "only available in the Bubberton9001 desktop app",
+      "only available in the bubbertron9001 desktop app",
     );
     expect(invokeMock).not.toHaveBeenCalled();
   });

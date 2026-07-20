@@ -1,19 +1,19 @@
-# Bubberton9001
+# bubbertron9001
 
-**The skills-powered AI agent for Roblox Studio. ** Bubberton9001 ** for
-short—plans the work, researches current answers, changes the game, verifies the
-result, and corrects errors.
+**The skills-powered AI agent for Roblox Studio.** bubbertron9001—**B9** for
+short—plans the work, researches current answers, changes the game, verifies
+the result, and corrects errors.
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Made with Tauri](https://img.shields.io/badge/Made%20with-Tauri-blue)](https://tauri.app)
 [![React](https://img.shields.io/badge/React-19-61DAFB)](https://react.dev)
 
-Bubberton9001 connects OpenAI, Anthropic, and ChatGPT subscription models
+bubbertron9001 connects OpenAI, Anthropic, and ChatGPT subscription models
 directly to Roblox Studio. It can manipulate instances, scripts, and properties
 through natural language while grounding Roblox decisions in a bundled skill
 library.
 
-## Why Bubberton9001?
+## Why bubbertron9001?
 
 Most AI coding tools are built for text files. Roblox Studio is a live hierarchy
 of instances, properties, assets, and Luau scripts. B9 bridges that gap with a
@@ -33,6 +33,8 @@ verify → repair if needed
 - **Automatic Planning** - Complex changes begin with a visible, tracked plan
 - **Web Search** - Current Roblox documentation and uncertain facts can be researched
 - **Proof-Backed Verification** - A mutation must be followed by a successful Studio read-back before a plan can finish
+- **Playtest & Fix** - Reads bounded Studio playtest state, warnings, and errors, then traces runtime problems back to their source
+- **Guided Mac Setup** - Four clickable first-run steps install the paired plugin, open sign-in, launch Studio, and verify the connection without Terminal
 - **Broad Toolset** - Studio, bulk, toolbox, skill, research, and workflow tools
 - **Multi-Provider** - OpenAI API, Anthropic API, or ChatGPT Plus/Pro (no API key needed!)
 - **Safe Creator Store** - Free models are revalidated and imported scripts are quarantined for review
@@ -71,7 +73,7 @@ The plan and tool progress stay visible while B9 works.
 └─────────────┘
 ```
 
-1. You describe a goal in Bubberton9001
+1. You describe a goal in bubbertron9001
 2. B9 searches or loads only the skills it needs
 3. Complex work gets a structured plan
 4. The Rust bridge queues requests for the Studio plugin
@@ -82,36 +84,43 @@ The plan and tool progress stay visible while B9 works.
 
 ## Installation
 
-### Prerequisites
+### On a Mac — no Terminal required
 
-- [Node.js](https://nodejs.org/) v20.19+ or v22.12+ (`.nvmrc` pins Node 22)
-- [Rust](https://rustup.rs/) (for Tauri)
-- [Roblox Studio](https://create.roblox.com/)
+1. Open the bubbertron9001 `.dmg` installer.
+2. Drag **bubbertron9001** onto the **Applications** folder.
+3. Open bubbertron9001 from Applications.
+4. Follow the four big setup steps in the app. B9 can open the Roblox Studio
+   download, install its securely paired Studio plugin, open ChatGPT sign-in,
+   launch Studio, and confirm the connection for you.
 
-### Quick Start
+Roblox Studio still requires one visible safety choice inside each experience:
+open **File → Experience Settings → Security** and turn on **Allow HTTP
+Requests**. The B9 setup guide shows this at the right time.
+
+See [Mac install guide](docs/MAC_INSTALL.md) for the complete parent/child
+handoff, including the current macOS signing note.
+
+### Build the Mac installer
+
+Node.js and Rust are needed only on the Mac that builds B9—not on the Mac that
+installs the finished app.
 
 ```bash
-# Clone the repo
-git clone https://github.com/jakesixtyoneeighty/bubbertron9001.git
-cd bubbertron9001
-
-# Install dependencies
 npm install
-
-# Run in development mode
-npm run tauri dev
+npm run package:mac
 ```
+
+The drag-to-Applications installer is written to
+`src-tauri/target/release/bundle/dmg/`.
 
 ### Install the Studio Plugin
 
-1. Start Bubberton9001 Desktop with `npm run tauri dev`.
-2. On the connection screen, choose **Install Automatically**.
-3. For a manual install, choose **Download Paired Plugin**, then move the
-   downloaded file into Roblox Studio’s **Plugins Folder**.
-4. Restart Roblox Studio. You’ll see **Bubberton9001** in the plugin toolbar.
+The first-run setup guide installs the plugin automatically. If a manual
+fallback is ever needed, choose **Download Paired Plugin** on the connection
+screen, move it into Roblox Studio’s Plugins folder, and restart Studio.
 
 The checked-in file at
-`studio-plugin/bubberton9001-bridge.server.lua` is an intentionally unpaired
+`studio-plugin/bubbertron9001-bridge.server.lua` is an intentionally unpaired
 source template. Do not install or redistribute that raw file: only the desktop
 app can render a copy whose pairing secret matches its local bridge.
 
@@ -163,6 +172,13 @@ browser profile.
 | `roblox_set_script` | Replace entire script content |
 | `roblox_edit_script` | Find/replace within scripts |
 | `roblox_run_code` | Execute bounded Luau after a fresh per-call confirmation |
+
+### Playtest Diagnostics
+
+| Tool | What it does |
+|------|-------------|
+| `roblox_get_playtest_state` | Read whether Studio is editing, running, or paused |
+| `roblox_get_recent_logs` | Read a bounded, redacted set of recent Studio Output messages |
 
 ### Bulk Operations
 | Tool | What it does |
@@ -216,6 +232,10 @@ browser profile.
 ## Development
 
 ```bash
+# Install local development prerequisites first: Node.js 20.19+ or 22.12+,
+# Rust, and Roblox Studio.
+npm install
+
 # Full app with hot reload
 npm run tauri dev
 
@@ -237,7 +257,7 @@ npm run tauri build
 ### Project Structure
 
 ```
-stud/
+bubbertron9001/
 ├── src/                      # React frontend
 │   ├── components/           # UI components (shadcn/ui + prompt-kit)
 │   ├── lib/
@@ -252,7 +272,7 @@ stud/
 │       ├── bridge.rs        # HTTP bridge server (Warp)
 │       └── lib.rs           # Tauri app setup
 └── studio-plugin/           # Roblox Studio plugin
-    └── bubberton9001-bridge.server.lua # Unpaired source template
+    └── bubbertron9001-bridge.server.lua # Unpaired source template
 ```
 
 ## Tech Stack
@@ -275,8 +295,11 @@ stud/
 - [x] **Web Search** - Provider-native current-information research
 - [x] **Error Repair** - Bounded verification and correction workflow
 - [x] **Secure Persistence** - Native credential storage with plaintext migration
-- [x] **CI Gates** - Frontend, Rust, skills, audit, and plugin-integrity checks
+- [x] **Local Release Gates** - Frontend, Rust, skills, and plugin-integrity checks
 - [x] **@ Mentions** - Reference instances with `@game.Workspace.Part`
+- [x] **Playtest & Fix** - Inspect runtime state and bounded Studio Output diagnostics
+- [x] **Guided Mac Setup** - Install and connect through clickable first-run steps
+- [ ] **Signed Releases & Updates** - Notarized universal Mac builds with automatic updates
 - [ ] **Change Preview** - Approve a script diff before it is applied
 - [ ] **One-Click Games** - Templates for Obby, Tycoon, FPS, etc.
 - [ ] **Cloud Operations** - Authenticated DataStore and publishing workflows
@@ -296,7 +319,7 @@ See [AGENTS.md](./AGENTS.md) for code style guidelines and architecture details.
 
 ## Community
 
-- Report bugs via [GitHub Issues](https://github.com/jakesixtyoneeighty/stud/issues)
+- Report bugs via [GitHub Issues](https://github.com/jakesixtyoneeighty/bubbertron9001/issues)
 - Feature requests welcome!
 - Star the repo if you find it useful
 

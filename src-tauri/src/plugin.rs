@@ -1,14 +1,17 @@
-// Plugin installation management for the Bubberton9001 Studio bridge.
+// Plugin installation management for the bubbertron9001 Studio bridge.
 // Handles checking if plugin is installed and installing it to Roblox Plugins folder
 
 use std::fs;
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
+use std::process::Command;
 
 // Embed the plugin source directly in the binary
-const PLUGIN_SOURCE: &str = include_str!("../../studio-plugin/bubberton9001-bridge.server.lua");
-const PLUGIN_FILENAME: &str = "bubberton9001-bridge.server.lua";
+const PLUGIN_SOURCE: &str = include_str!("../../studio-plugin/bubbertron9001-bridge.server.lua");
+const PLUGIN_FILENAME: &str = "bubbertron9001-bridge.server.lua";
+const PREVIOUS_PLUGIN_FILENAME: &str = "bubberton9001-bridge.server.lua";
 const LEGACY_PLUGIN_FILENAME: &str = "stud-bridge.server.lua";
-const PAIRING_SECRET_PLACEHOLDER: &str = "__BUBBERTON9001_PAIRING_SECRET__";
+const PAIRING_SECRET_PLACEHOLDER: &str = "__bubbertron9001_PAIRING_SECRET__";
 const PAIRING_SECRET_PREFIX: &str = "local PAIRING_SECRET = \"";
 const PAIRING_SECRET_BYTES: usize = 64;
 
@@ -69,8 +72,18 @@ fn extract_pairing_secret(source: &str) -> Option<String> {
 }
 
 fn load_installed_pairing_secret() -> Option<String> {
-    let source = fs::read_to_string(get_plugins_folder()?.join(PLUGIN_FILENAME)).ok()?;
-    extract_pairing_secret(&source)
+    let plugins_folder = get_plugins_folder()?;
+    [
+        PLUGIN_FILENAME,
+        PREVIOUS_PLUGIN_FILENAME,
+        LEGACY_PLUGIN_FILENAME,
+    ]
+    .into_iter()
+    .find_map(|filename| {
+        fs::read_to_string(plugins_folder.join(filename))
+            .ok()
+            .and_then(|source| extract_pairing_secret(&source))
+    })
 }
 
 fn render_plugin_source(secret: &str) -> Result<String, String> {
@@ -93,27 +106,15 @@ fn render_plugin_source(secret: &str) -> Result<String, String> {
 pub fn check_roblox_studio_installed() -> bool {
     #[cfg(target_os = "macos")]
     {
-        // Check common installation locations on macOS
-        let paths = [
+        let mut paths = vec![
             PathBuf::from("/Applications/RobloxStudio.app"),
             PathBuf::from("/Applications/Roblox Studio.app"),
         ];
-
-        for path in paths {
-            if path.exists() {
-                return true;
-            }
-        }
-
-        // Also check if Roblox folder exists in Documents (indicates previous use)
         if let Some(home) = dirs::home_dir() {
-            let roblox_folder = home.join("Documents").join("Roblox");
-            if roblox_folder.exists() {
-                return true;
-            }
+            paths.push(home.join("Applications").join("RobloxStudio.app"));
+            paths.push(home.join("Applications").join("Roblox Studio.app"));
         }
-
-        false
+        paths.into_iter().any(|path| path.is_dir())
     }
 
     #[cfg(target_os = "windows")]
@@ -174,6 +175,39 @@ pub fn check_roblox_studio_installed() -> bool {
     }
 }
 
+/// Open Roblox Studio without asking a first-time user to use Terminal.
+#[tauri::command]
+pub fn open_roblox_studio() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut studio_paths = vec![
+            PathBuf::from("/Applications/RobloxStudio.app"),
+            PathBuf::from("/Applications/Roblox Studio.app"),
+        ];
+        if let Some(home) = dirs::home_dir() {
+            studio_paths.push(home.join("Applications").join("RobloxStudio.app"));
+            studio_paths.push(home.join("Applications").join("Roblox Studio.app"));
+        }
+        let studio_path = studio_paths
+            .into_iter()
+            .find(|path| path.exists())
+            .ok_or_else(|| {
+                "Roblox Studio is not installed yet. Download it first, then try again.".to_string()
+            })?;
+
+        Command::new("open")
+            .arg(studio_path)
+            .spawn()
+            .map_err(|error| format!("Could not open Roblox Studio: {error}"))?;
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err("Automatic Roblox Studio launch is currently available on macOS.".to_string())
+    }
+}
+
 /// Get the Roblox Plugins folder path for the current platform
 fn get_plugins_folder() -> Option<PathBuf> {
     #[cfg(target_os = "macos")]
@@ -216,8 +250,9 @@ pub fn check_plugin_installed() -> Result<PluginStatus, String> {
         .ok_or_else(|| "Could not determine Roblox Plugins folder".to_string())?;
 
     let plugin_path = plugins_folder.join(PLUGIN_FILENAME);
-    let legacy_plugin_path = plugins_folder.join(LEGACY_PLUGIN_FILENAME);
-    let legacy_install_detected = legacy_plugin_path.exists();
+    let previous_plugin_path = plugins_folder.join(PREVIOUS_PLUGIN_FILENAME);
+    let stud_plugin_path = plugins_folder.join(LEGACY_PLUGIN_FILENAME);
+    let legacy_install_detected = previous_plugin_path.exists() || stud_plugin_path.exists();
 
     if plugin_path.exists() {
         // Check if it's the current version by comparing content
@@ -242,6 +277,11 @@ pub fn check_plugin_installed() -> Result<PluginStatus, String> {
             })
         }
     } else if legacy_install_detected {
+        let legacy_plugin_path = if previous_plugin_path.exists() {
+            previous_plugin_path
+        } else {
+            stud_plugin_path
+        };
         Ok(PluginStatus {
             installed: true,
             path: legacy_plugin_path.to_string_lossy().to_string(),
@@ -260,7 +300,7 @@ pub fn check_plugin_installed() -> Result<PluginStatus, String> {
     }
 }
 
-/// Install the Bubberton9001 bridge and remove the legacy Stud filename.
+/// Install the bubbertron9001 bridge and remove the legacy Stud filename.
 #[tauri::command]
 pub fn install_plugin() -> Result<InstallResult, String> {
     let plugins_folder = get_plugins_folder()
@@ -273,28 +313,33 @@ pub fn install_plugin() -> Result<InstallResult, String> {
     }
 
     let plugin_path = plugins_folder.join(PLUGIN_FILENAME);
-    let legacy_plugin_path = plugins_folder.join(LEGACY_PLUGIN_FILENAME);
+    let legacy_plugin_paths = [
+        plugins_folder.join(PREVIOUS_PLUGIN_FILENAME),
+        plugins_folder.join(LEGACY_PLUGIN_FILENAME),
+    ];
 
     // Provision this installation's secret into the otherwise inert source template.
     let provisioned_source = render_plugin_source(pairing_secret())?;
     fs::write(&plugin_path, provisioned_source)
         .map_err(|e| format!("Failed to write plugin file: {}", e))?;
 
-    let migrated_legacy_install = if legacy_plugin_path.exists() {
+    let mut migrated_legacy_install = false;
+    for legacy_plugin_path in legacy_plugin_paths {
+        if !legacy_plugin_path.exists() {
+            continue;
+        }
         fs::remove_file(&legacy_plugin_path).map_err(|e| {
             format!(
-                "Installed Bubberton9001, but could not remove the legacy plugin at {}: {}. Remove it manually before restarting Roblox Studio.",
+                "Installed bubbertron9001, but could not remove the legacy plugin at {}: {}. Remove it manually before restarting Roblox Studio.",
                 legacy_plugin_path.to_string_lossy(),
                 e
             )
         })?;
-        true
-    } else {
-        false
-    };
+        migrated_legacy_install = true;
+    }
 
     let message = if migrated_legacy_install {
-        "Plugin upgraded from Stud to Bubberton9001. Restart Roblox Studio to load it."
+        "Plugin upgraded to bubbertron9001. Restart Roblox Studio to load it."
     } else {
         "Plugin installed successfully. Restart Roblox Studio to load it."
     };

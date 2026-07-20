@@ -1,5 +1,5 @@
 /**
- * useKeyboardShortcuts - Global keyboard shortcuts for Bubberton9001
+ * useKeyboardShortcuts - Global keyboard shortcuts for bubbertron9001
  */
 
 import { useEffect } from "react";

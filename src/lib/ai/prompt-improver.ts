@@ -1,5 +1,5 @@
 /**
- * Prompt Improver - Enhances prompts for Bubberton9001's agent workflow.
+ * Prompt Improver - Enhances prompts for bubbertron9001's agent workflow.
  *
  * Takes a basic prompt and restructures it to be clearer, more specific,
  * and better suited for a skills-powered, tool-using Roblox agent.
@@ -263,7 +263,7 @@ async function improveWithAnthropic(prompt: string, apiKey: string): Promise<Imp
 }
 
 /**
- * Improve a prompt for Bubberton9001 using the best available provider.
+ * Improve a prompt for bubbertron9001 using the best available provider.
  * Priority: OpenAI API > Anthropic API > Codex (ChatGPT Plus/Pro)
  */
 export async function improvePrompt(prompt: string): Promise<ImproveResult> {

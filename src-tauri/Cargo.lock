@@ -348,7 +348,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "bubberton9001"
+name = "bubbertron9001"
 version = "0.1.0"
 dependencies = [
  "dirs 5.0.1",

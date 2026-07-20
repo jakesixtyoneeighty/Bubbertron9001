@@ -1,8 +1,8 @@
 {
-  "name": "bubberton9001",
+  "name": "bubbertron9001",
   "private": true,
   "version": "0.1.0",
-  "description": "Bubberton9001, the skills-powered AI agent for Roblox Studio",
+  "description": "bubbertron9001, the skills-powered AI agent for Roblox Studio",
   "type": "module",
   "engines": {
     "node": "^20.19.0 || >=22.12.0"
@@ -11,6 +11,7 @@
     "dev": "vite",
     "typecheck": "tsc --noEmit",
     "build": "tsc && vite build",
+    "package:mac": "CARGO_PROFILE_RELEASE_STRIP=none tauri build --bundles app,dmg",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest",

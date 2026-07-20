@@ -1,6 +1,10 @@
 import { create } from "zustand";
 import { persist } from "zustand/middleware";
-import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/config/brand";
+import {
+  LEGACY_STORAGE_KEYS,
+  PREVIOUS_STORAGE_KEYS,
+  STORAGE_KEYS,
+} from "@/config/brand";
 import { migrateStorageKey } from "@/lib/storage";
 import {
   deleteSecretValue,
@@ -75,6 +79,7 @@ function currentProvider(value: unknown): ProviderType {
     : "codex";
 }
 
+migrateStorageKey(PREVIOUS_STORAGE_KEYS.settings, STORAGE_KEYS.settings);
 migrateStorageKey(LEGACY_STORAGE_KEYS.settings, STORAGE_KEYS.settings);
 
 export const useSettingsStore = create<SettingsState>()(

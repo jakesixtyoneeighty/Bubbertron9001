@@ -6,6 +6,11 @@ mod secrets;
 
 use std::thread;
 
+#[tauri::command]
+fn restart_app(app: tauri::AppHandle) {
+    app.restart();
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Start the bridge server in a separate thread with its own tokio runtime
@@ -22,8 +27,10 @@ pub fn run() {
             plugin::install_plugin,
             plugin::get_plugins_path,
             plugin::check_roblox_studio_installed,
+            plugin::open_roblox_studio,
             plugin::get_bridge_auth_token,
             plugin::get_paired_plugin_source,
+            restart_app,
             secrets::secret_get,
             secrets::secret_set,
             secrets::secret_delete

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { useAgentStore } from "@/stores/agent"
 import { useSettingsStore } from "@/stores/settings"
 import {
@@ -25,6 +25,7 @@ import {
   robloxBulkCreate,
   robloxBulkDelete,
   robloxBulkSetProperty,
+  robloxGetRecentLogs,
   robloxInsertAsset,
   robloxToolboxSearch,
   robloxTools,
@@ -44,6 +45,158 @@ function executeTool(toolDefinition: unknown, input: Record<string, unknown>) {
   }
   return candidate.execute(input)
 }
+
+function parseToolInput(toolDefinition: unknown, input: unknown) {
+  const candidate = toolDefinition as {
+    inputSchema: {
+      safeParse: (value: unknown) => { success: boolean }
+    }
+  }
+  return candidate.inputSchema.safeParse(input)
+}
+
+describe("playtest diagnostic readbacks", () => {
+  beforeEach(() => {
+    useAgentStore.getState().reset()
+    useAgentStore.getState().beginRun("Inspect the playtest", true)
+    vi.mocked(isStudioConnected).mockReset()
+    vi.mocked(isStudioConnected).mockResolvedValue(true)
+    vi.mocked(studioRequest).mockReset()
+  })
+
+  afterEach(() => {
+    vi.mocked(isStudioConnected).mockReset()
+    vi.mocked(isStudioConnected).mockResolvedValue(false)
+    vi.mocked(studioRequest).mockReset()
+  })
+
+  it("reads and validates the current Studio playtest state", async () => {
+    vi.mocked(studioRequest).mockResolvedValue({
+      success: true,
+      data: {
+        state: "running",
+        runState: "Running",
+        isRunning: true,
+        isEdit: false,
+        isRunMode: false,
+        isClient: true,
+        isServer: false,
+        isStudio: true,
+        observedAt: 1_750_000_000,
+      },
+    })
+
+    await expect(
+      executeTool(robloxTools.roblox_get_playtest_state, {})
+    ).resolves.toMatchObject({
+      state: "running",
+      runState: "Running",
+      isRunning: true,
+    })
+    expect(studioRequest).toHaveBeenCalledWith(
+      "/playtest/state",
+      undefined,
+      undefined
+    )
+    expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(1)
+  })
+
+  it("validates bounded logs without counting them as verification evidence", async () => {
+    vi.mocked(studioRequest).mockResolvedValue({
+      success: true,
+      data: {
+        logs: [
+          {
+            sequence: 7,
+            timestamp: 1_750_000_001,
+            level: "warning",
+            message: "Infinite yield possible",
+            truncated: false,
+          },
+          {
+            sequence: 8,
+            timestamp: 1_750_000_002,
+            level: "error",
+            message: "attempt to index nil",
+            truncated: false,
+          },
+        ],
+        count: 2,
+        available: 2,
+        stored: 10,
+        dropped: 0,
+        hasMore: false,
+        messageTruncations: 0,
+        payloadTruncated: false,
+        bridgeMessagesExcluded: true,
+        diagnosticOnly: true,
+      },
+    })
+
+    await expect(
+      executeTool(robloxTools.roblox_get_recent_logs, {
+        limit: 25,
+        levels: ["warning", "error"],
+      })
+    ).resolves.toMatchObject({
+      count: 2,
+      logs: [
+        { level: "warning" },
+        { level: "error" },
+      ],
+      bridgeMessagesExcluded: true,
+      diagnosticOnly: true,
+    })
+    expect(studioRequest).toHaveBeenCalledWith(
+      "/playtest/logs",
+      { limit: 25, levels: ["warning", "error"] },
+      undefined
+    )
+    expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(0)
+  })
+
+  it("rejects malformed Studio log payloads instead of recording evidence", async () => {
+    vi.mocked(studioRequest).mockResolvedValue({
+      success: true,
+      data: {
+        logs: [{
+          sequence: 1,
+          timestamp: 1_750_000_000,
+          level: "error",
+          message: "x".repeat(4_097),
+          truncated: false,
+        }],
+        count: 1,
+        available: 1,
+        stored: 1,
+        dropped: 0,
+        hasMore: false,
+        messageTruncations: 0,
+        payloadTruncated: false,
+        bridgeMessagesExcluded: true,
+        diagnosticOnly: true,
+      },
+    })
+
+    await expect(
+      executeTool(robloxTools.roblox_get_recent_logs, { limit: 10 })
+    ).resolves.toEqual({
+      error: "Studio returned an invalid recent log response",
+    })
+    expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(0)
+  })
+
+  it("bounds log request size and rejects duplicate filters at the provider edge", () => {
+    expect(parseToolInput(robloxGetRecentLogs, { limit: 100 }).success).toBe(true)
+    expect(parseToolInput(robloxGetRecentLogs, { limit: 101 }).success).toBe(false)
+    expect(
+      parseToolInput(robloxGetRecentLogs, {
+        limit: 10,
+        levels: ["error", "error"],
+      }).success
+    ).toBe(false)
+  })
+})
 
 describe("Studio mutation approval", () => {
   beforeEach(() => {
@@ -259,6 +412,43 @@ describe("deterministic Studio verification evidence", () => {
     await expect(finishBuildPlan()).resolves.toMatchObject({ finished: true })
     expect(useAgentStore.getState().phase).toBe("completed")
     expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(1)
+  })
+
+  it("does not allow recent logs alone to verify a mutation", async () => {
+    vi.mocked(studioRequest)
+      .mockResolvedValueOnce({
+        success: true,
+        data: { path: "game.Workspace.VerifiedPart" },
+      })
+      .mockResolvedValueOnce({
+        success: true,
+        data: {
+          logs: [],
+          count: 0,
+          available: 0,
+          stored: 0,
+          dropped: 0,
+          hasMore: false,
+          messageTruncations: 0,
+          payloadTruncated: false,
+          bridgeMessagesExcluded: true,
+          diagnosticOnly: true,
+        },
+      })
+
+    await createCompletedBuildPlan()
+    await executeTool(robloxTools.roblox_create, {
+      className: "Part",
+      parent: "game.Workspace",
+      name: "VerifiedPart",
+    })
+    await executeTool(robloxTools.roblox_get_recent_logs, { limit: 25 })
+
+    await expect(finishBuildPlan()).resolves.toMatchObject({
+      finished: false,
+      retryable: true,
+    })
+    expect(useAgentStore.getState().studioEvidence.readbackCount).toBe(0)
   })
 
   it("does not count a failed read as verification", async () => {

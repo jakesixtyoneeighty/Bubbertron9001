@@ -14,14 +14,22 @@ export type SoundName =
   | "hover"
   | "connect";
 
-const MUTE_STORAGE_KEY = "bubberton9001-muted";
+const MUTE_STORAGE_KEY = "bubbertron9001-muted";
+const PREVIOUS_MUTE_STORAGE_KEY = "bubberton9001-muted";
 
 let ctx: AudioContext | null = null;
 let muted = false;
 let lastHoverAt = 0;
 
 try {
-  muted = localStorage.getItem(MUTE_STORAGE_KEY) === "true";
+  const stored =
+    localStorage.getItem(MUTE_STORAGE_KEY) ??
+    localStorage.getItem(PREVIOUS_MUTE_STORAGE_KEY);
+  muted = stored === "true";
+  if (stored !== null) {
+    localStorage.setItem(MUTE_STORAGE_KEY, stored);
+  }
+  localStorage.removeItem(PREVIOUS_MUTE_STORAGE_KEY);
 } catch {
   // localStorage unavailable; default to sound on
 }

@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**Bubberton9001** (short name **B9**) is a skills-powered AI agent for Roblox Studio. It connects OpenAI, Anthropic, and ChatGPT subscription models to Studio through an HTTP bridge, then plans, researches, edits, verifies, and repairs work through natural language.
+**bubbertron9001** (short name **B9**) is a skills-powered AI agent for Roblox Studio. It connects OpenAI, Anthropic, and ChatGPT subscription models to Studio through an HTTP bridge, then plans, researches, edits, verifies, and repairs work through natural language.
 
 ### Architecture
 
@@ -24,7 +24,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - **React Frontend** (`src/`): Chat UI with shadcn/ui components, Zustand state management
 - **Rust Bridge** (`src-tauri/src/bridge.rs`): HTTP server on port 3001 that queues requests; uses oneshot channels for async request/response matching
-- **Studio Plugin** (`studio-plugin/bubberton9001-bridge.server.lua`): Luau plugin polls the bridge, executes commands, and creates undo waypoints
+- **Studio Plugin** (`studio-plugin/bubbertron9001-bridge.server.lua`): Luau plugin polls the bridge, executes commands, and creates undo waypoints
 - **Agent Runtime** (`src/lib/agent/`): planning, progress, verification, and repair tools
 - **Skill Runtime** (`src/lib/skills/` and `skills/`): compact catalog with lazy quick/full loading for 30 Roblox skills
 
@@ -50,8 +50,8 @@ npx tsc --noEmit       # Type checking
 | `skills/` | 30 vendored Roblox Brain skills and deeper references |
 | `src/lib/roblox/tools.ts` | Studio, bulk, toolbox, and question tools |
 | `src/lib/roblox/client.ts` | HTTP client for bridge server communication |
-| `src-tauri/src/bridge.rs` | Bridge endpoints under `/bubberton9001/*`; legacy `/stud/*` aliases remain for compatibility |
-| `studio-plugin/bubberton9001-bridge.server.lua` | Luau plugin that handles Studio operations |
+| `src-tauri/src/bridge.rs` | Bridge endpoints under `/bubbertron9001/*`; legacy `/stud/*` aliases remain for compatibility |
+| `studio-plugin/bubbertron9001-bridge.server.lua` | Luau plugin that handles Studio operations |
 | `src/stores/` | Zustand state for chat, agent runs, settings, auth, Roblox, and plugin state |
 
 ## Roblox Tools Available to AI

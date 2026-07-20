@@ -1,5 +1,9 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { LEGACY_STORAGE_KEYS, STORAGE_KEYS } from "@/config/brand";
+import {
+  LEGACY_STORAGE_KEYS,
+  PREVIOUS_STORAGE_KEYS,
+  STORAGE_KEYS,
+} from "@/config/brand";
 
 export const SECRET_KEYS = {
   openaiApiKey: "openai-api-key",
@@ -19,7 +23,8 @@ export interface SecretStorageInitialization {
 }
 
 const ALL_SECRET_KEYS = Object.values(SECRET_KEYS);
-const BROWSER_FALLBACK_KEY = "bubberton9001-browser-secrets";
+const BROWSER_FALLBACK_KEY = "bubbertron9001-browser-secrets";
+const PREVIOUS_BROWSER_FALLBACK_KEY = "bubberton9001-browser-secrets";
 
 let backend: SecretStorageBackend = "uninitialized";
 let initialization: Promise<SecretStorageInitialization> | null = null;
@@ -85,11 +90,13 @@ function readApiKeysFromSettings(
 
 function readLegacySecrets(): Partial<Record<SecretKey, string>> {
   const migrated: Partial<Record<SecretKey, string>> = {
+    ...parseSecretRecord(localStorage.getItem(PREVIOUS_BROWSER_FALLBACK_KEY)),
     ...parseSecretRecord(localStorage.getItem(BROWSER_FALLBACK_KEY)),
   };
 
   for (const storageKey of [
     STORAGE_KEYS.settings,
+    PREVIOUS_STORAGE_KEYS.settings,
     LEGACY_STORAGE_KEYS.settings,
   ]) {
     const apiKeys = readApiKeysFromSettings(storageKey);
@@ -102,6 +109,7 @@ function readLegacySecrets(): Partial<Record<SecretKey, string>> {
 
   for (const storageKey of [
     STORAGE_KEYS.codexAuth,
+    PREVIOUS_STORAGE_KEYS.codexAuth,
     LEGACY_STORAGE_KEYS.codexAuth,
   ]) {
     const value = localStorage.getItem(storageKey);
@@ -145,8 +153,10 @@ function scrubApiKeysFromSettings(storageKey: string): void {
 
 function scrubLegacyPlaintext(): void {
   scrubApiKeysFromSettings(STORAGE_KEYS.settings);
+  scrubApiKeysFromSettings(PREVIOUS_STORAGE_KEYS.settings);
   scrubApiKeysFromSettings(LEGACY_STORAGE_KEYS.settings);
   localStorage.removeItem(STORAGE_KEYS.codexAuth);
+  localStorage.removeItem(PREVIOUS_STORAGE_KEYS.codexAuth);
   localStorage.removeItem(LEGACY_STORAGE_KEYS.codexAuth);
 }
 
@@ -194,6 +204,7 @@ async function initializeOsKeychain(
 
   scrubLegacyPlaintext();
   localStorage.removeItem(BROWSER_FALLBACK_KEY);
+  localStorage.removeItem(PREVIOUS_BROWSER_FALLBACK_KEY);
   backend = "os-keychain";
   return { backend, migrationErrors };
 }
@@ -204,6 +215,7 @@ function initializeBrowserFallback(
   secretCache = { ...migrated };
   backend = "browser-fallback";
   persistBrowserFallback();
+  localStorage.removeItem(PREVIOUS_BROWSER_FALLBACK_KEY);
   scrubLegacyPlaintext();
   return { backend, migrationErrors: [] };
 }
@@ -292,6 +304,7 @@ export async function deleteSecretValue(key: SecretKey): Promise<void> {
 
 export const __secureStorageTestUtils = {
   browserFallbackKey: BROWSER_FALLBACK_KEY,
+  previousBrowserFallbackKey: PREVIOUS_BROWSER_FALLBACK_KEY,
   reset() {
     backend = "uninitialized";
     initialization = null;

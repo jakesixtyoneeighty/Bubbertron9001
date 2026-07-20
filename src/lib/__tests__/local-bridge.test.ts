@@ -36,7 +36,7 @@ describe("authenticated local bridge fetch", () => {
 
   it("adds the native token to protected local requests and caches it", async () => {
     await authenticatedLocalFetch(
-      "http://localhost:3001/bubberton9001/status",
+      "http://localhost:3001/bubbertron9001/status",
     );
     await authenticatedLocalFetch("http://localhost:1455/auth/poll");
 
@@ -65,7 +65,7 @@ describe("authenticated local bridge fetch", () => {
     isTauriMock.mockReturnValue(false);
 
     await authenticatedLocalFetch(
-      "http://localhost:3001/bubberton9001/status",
+      "http://localhost:3001/bubbertron9001/status",
       { headers: { Accept: "application/json" } },
     );
 
