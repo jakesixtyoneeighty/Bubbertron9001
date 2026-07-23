@@ -9,6 +9,7 @@ import {
 } from "@/lib/agent/run-state";
 import { isAuthenticated as isCodexAuthenticated } from "@/lib/auth/codex";
 import { resolveProviderSelection } from "./provider-selection";
+import type { ChatMode } from "@/stores/chat";
 
 export { ROBLOX_SYSTEM_PROMPT } from "./system-prompt";
 
@@ -51,6 +52,7 @@ export interface ChatCallbacks {
 
 export interface ChatRunOptions {
   signal?: AbortSignal;
+  mode?: ChatMode;
   forcePlan?: boolean;
   forceWebSearch?: boolean;
   officialDocsOnly?: boolean;
@@ -164,9 +166,10 @@ export function useChat() {
     const currentMessage =
       [...messages].reverse().find((message) => message.role === "user")
         ?.content || "";
-    const planningRequired = appSettings.autoPlan
+    const mode = options.mode || "build";
+    const planningRequired = mode === "build" && appSettings.autoPlan
       ? shouldCreatePlan(currentMessage, options.forcePlan)
-      : options.forcePlan === true;
+      : mode === "build" && options.forcePlan === true;
 
     const runId = beginAgentRun(currentMessage, planningRequired);
 
@@ -177,6 +180,7 @@ export function useChat() {
       apiKey,
       messages: messages.slice(-appSettings.maxHistoryMessages),
       planningRequired,
+      mode,
       ...options,
     });
   };

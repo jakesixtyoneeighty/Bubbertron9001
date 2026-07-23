@@ -401,7 +401,11 @@ export const robloxGetProperties = tool({
   description: `Get all properties of an instance in Roblox Studio.
 
 Returns a list of property names, values, and types.
-Useful for understanding what can be modified on an instance.`,
+Useful for understanding what can be modified on an instance.
+
+The path must already exist. Use the exact canonical path returned by create,
+clone, search, or get_children. Do not guess a descendant path; inspect its
+known parent with roblox_get_children first.`,
   inputSchema: z.object({
     path: studioPathSchema.describe("Full instance path"),
   }),
@@ -430,14 +434,26 @@ Useful for understanding what can be modified on an instance.`,
 export const robloxSetProperty = tool({
   description: `Set a property value on an instance in Roblox Studio.
 
-The value is parsed based on the property type:
+Studio reads the target property's real type and parses the string accordingly:
 - Numbers: "10", "3.14"
 - Booleans: "true", "false"
 - Strings: "Hello World"
-- Vector3: "1, 2, 3"
+- Vector3: "-10.5, 2.25, 3" (signed decimals are supported)
+- Vector2: "0.5, -12"
 - Color3: "255, 128, 0" (RGB 0-255) or "#FF8800"
 - BrickColor: "Bright red"
-- Enum: "Enum.Material.Plastic"`,
+- Enum: "Enum.Material.Plastic"
+- CFrame: "0, 5, -20" for position, or all 12 components
+- UDim: "scale, offset"
+- UDim2: "xScale, xOffset, yScale, yOffset"
+- NumberRange: "value" or "min, max"
+- Constant NumberSequence: "0.5"
+- Constant ColorSequence: an RGB or hex color
+- Instance reference: an exact "game..." path
+
+Use the exact path returned by a prior structured Studio tool. The result
+returns Studio's applied value and type; still perform a later matching
+readback before treating the change as verified.`,
   inputSchema: z.object({
     path: studioPathSchema.describe("Full instance path"),
     property: shortTextSchema.describe("Property name to set"),
@@ -455,7 +471,12 @@ The value is parsed based on the property type:
       return { error: notConnectedError() }
     }
 
-    const result = await studioRequest<{ path: string }>(
+    const result = await studioRequest<{
+      path: string
+      property: string
+      value: string
+      type: string
+    }>(
       "/instance/set",
       { path, property, value },
       options?.abortSignal,
@@ -465,7 +486,13 @@ The value is parsed based on the property type:
       return { error: result.error }
     }
 
-    return { success: true, path: result.data.path, property, value }
+    return {
+      success: true,
+      path: result.data.path,
+      property: result.data.property,
+      value: result.data.value,
+      type: result.data.type,
+    }
   },
 })
 
@@ -477,7 +504,10 @@ Common class names:
 - Parts: Part, MeshPart, UnionOperation
 - UI: ScreenGui, Frame, TextLabel, TextButton
 - Values: StringValue, IntValue, BoolValue, ObjectValue
-- Other: Folder, Model, RemoteEvent, RemoteFunction`,
+- Other: Folder, Model, RemoteEvent, RemoteFunction
+
+The result includes the exact canonical path of the created instance. Reuse
+that returned path for later property changes and readback verification.`,
   inputSchema: z.object({
     className: shortTextSchema.describe("The class name of the instance to create"),
     parent: studioPathSchema.describe("Full path to the parent instance"),
@@ -858,6 +888,9 @@ export const robloxBulkSetProperty = tool({
 
 More efficient than calling roblox_set_property multiple times.
 Each operation specifies path, property name, and value.
+Values use the same type-aware formats as roblox_set_property, including signed
+decimal Vector2/Vector3 values, RGB/hex Color3, BrickColor names, enums, CFrame,
+UDim/UDim2, NumberRange, constant sequences, and exact Instance paths.
 
 Example: Make all parts red and anchored
 [

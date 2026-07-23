@@ -49,12 +49,21 @@ interface ContextChipsProps {
   onChipClick: (chipId: ChipAction) => void;
   activeChips?: ChipAction[];
   disabled?: boolean;
+  visibleChips?: ChipAction[];
 }
 
-export function ContextChips({ onChipClick, activeChips = [], disabled = false }: ContextChipsProps) {
+export function ContextChips({
+  onChipClick,
+  activeChips = [],
+  disabled = false,
+  visibleChips,
+}: ContextChipsProps) {
+  const displayedChips = visibleChips
+    ? chips.filter((chip) => visibleChips.includes(chip.id))
+    : chips;
   return (
     <div className="flex items-center gap-1.5 overflow-x-auto pb-1">
-      {chips.map((chip) => {
+      {displayedChips.map((chip) => {
         const isActive = activeChips.includes(chip.id);
         return (
           <Button

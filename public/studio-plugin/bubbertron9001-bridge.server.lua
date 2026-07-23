@@ -106,6 +106,7 @@ local connectButton
 local activityContainer
 local activityList
 local processingIndicator
+local isWidgetCompact = false
 
 -- Utility: Create rounded frame
 local function createFrame(props)
@@ -263,9 +264,9 @@ local function createWidget()
 		true,  -- Initially enabled
 		false, -- Override previous state
 		280,   -- Width
-		320,   -- Height
-		260,   -- Min width
-		280    -- Min height
+		260,   -- Height
+		180,   -- Min width
+		72     -- Min height (allows a compact, easy-to-move panel)
 	)
 	
 	widget = plugin:CreateDockWidgetPluginGui("bubbertron9001Bridge", info)
@@ -315,6 +316,27 @@ local function createWidget()
 	statusHeader.Size = UDim2.new(1, 0, 0, 24)
 	statusHeader.BackgroundTransparency = 1
 	statusHeader.Parent = statusCard
+
+	-- Compact the panel to just its connection status. Roblox owns the floating
+	-- window chrome, so a smaller minimum size plus collapsible content gives the
+	-- user a lightweight panel they can resize and move out of the way.
+	local compactButton = Instance.new("TextButton")
+	compactButton.Name = "CompactButton"
+	compactButton.AnchorPoint = Vector2.new(1, 0)
+	compactButton.Position = UDim2.new(1, 0, 0, 0)
+	compactButton.Size = UDim2.new(0, 24, 0, 24)
+	compactButton.BackgroundColor3 = Colors.bgTertiary
+	compactButton.BorderSizePixel = 0
+	compactButton.Text = "−"
+	compactButton.TextColor3 = Colors.textSecondary
+	compactButton.TextSize = 18
+	compactButton.Font = Enum.Font.GothamMedium
+	compactButton.AutoButtonColor = false
+	compactButton.Parent = statusHeader
+
+	local compactCorner = Instance.new("UICorner")
+	compactCorner.CornerRadius = UDim.new(0, 7)
+	compactCorner.Parent = compactButton
 	
 	-- Status dot (animated)
 	statusDot = Instance.new("Frame")
@@ -435,6 +457,49 @@ local function createWidget()
 	})
 	emptyLabel.Name = "EmptyState"
 	emptyLabel.TextYAlignment = Enum.TextYAlignment.Center
+
+	local function applyCompactState()
+		local compact = isWidgetCompact
+		padding.PaddingTop = UDim.new(0, compact and 10 or 16)
+		padding.PaddingBottom = UDim.new(0, compact and 10 or 16)
+		padding.PaddingLeft = UDim.new(0, compact and 10 or 16)
+		padding.PaddingRight = UDim.new(0, compact and 10 or 16)
+		layout.Padding = UDim.new(0, compact and 0 or 12)
+		statusCard.Size = UDim2.new(1, 0, 0, compact and 48 or 80)
+		statusPadding.PaddingTop = UDim.new(0, compact and 12 or 14)
+		statusPadding.PaddingBottom = UDim.new(0, compact and 12 or 14)
+		statusPadding.PaddingLeft = UDim.new(0, compact and 12 or 14)
+		statusPadding.PaddingRight = UDim.new(0, compact and 12 or 14)
+		statusText.Size = UDim2.new(1, -52, 1, 0)
+		processingIndicator.Visible = not compact
+		subText.Visible = not compact
+		connectButton.Visible = not compact
+		activityHeader.Visible = not compact
+		activityContainer.Visible = not compact
+		compactButton.Text = compact and "+" or "−"
+		compactButton.TextSize = compact and 16 or 18
+	end
+
+	compactButton.MouseEnter:Connect(function()
+		TweenService:Create(compactButton, TweenInfo.new(0.15), {
+			BackgroundColor3 = Colors.border,
+			TextColor3 = Colors.text,
+		}):Play()
+	end)
+
+	compactButton.MouseLeave:Connect(function()
+		TweenService:Create(compactButton, TweenInfo.new(0.15), {
+			BackgroundColor3 = Colors.bgTertiary,
+			TextColor3 = Colors.textSecondary,
+		}):Play()
+	end)
+
+	compactButton.MouseButton1Click:Connect(function()
+		isWidgetCompact = not isWidgetCompact
+		applyCompactState()
+	end)
+
+	applyCompactState()
 	
 	return widget
 end
@@ -729,6 +794,32 @@ local function assertUniqueChildName(parent, name, ignoredInstance)
 	end
 end
 
+local function describeAvailableChildren(instance)
+	local children = instance:GetChildren()
+	if #children == 0 then
+		return " This instance has no children."
+	end
+
+	table.sort(children, function(left, right)
+		if left.Name == right.Name then
+			return left.ClassName < right.ClassName
+		end
+		return left.Name < right.Name
+	end)
+
+	local descriptions = {}
+	local limit = math.min(#children, 12)
+	for index = 1, limit do
+		local child = children[index]
+		table.insert(descriptions, "'" .. child.Name .. "' (" .. child.ClassName .. ")")
+	end
+	if #children > limit then
+		table.insert(descriptions, "and " .. (#children - limit) .. " more")
+	end
+
+	return " Available children: " .. table.concat(descriptions, ", ") .. "."
+end
+
 local function getInstanceFromPath(path)
 	if type(path) ~= "string" or path == "" then
 		return nil, "Path must be a non-empty string"
@@ -763,7 +854,17 @@ local function getInstanceFromPath(path)
 		end
 
 		if #matches == 0 then
-			return nil, "No child named '" .. segment .. "' under " .. current:GetFullName()
+			local parentPath = i == 2 and "game" or "game." .. table.concat(parts, ".", 2, i - 1)
+			return nil,
+				"No child named '"
+				.. segment
+				.. "' under "
+				.. current:GetFullName()
+				.. ". Existing parent path: "
+				.. parentPath
+				.. "."
+				.. describeAvailableChildren(current)
+				.. " Use an exact path returned by create, search, or get_children."
 		end
 		if #matches > 1 then
 			return nil, "Ambiguous path: multiple children named '" .. segment .. "' under " .. current:GetFullName()
@@ -777,9 +878,215 @@ end
 local function requireInstanceFromPath(path, label)
 	local instance, pathError = getInstanceFromPath(path)
 	if not instance then
-		error((label or "Instance") .. " path error: " .. pathError, 2)
+		error((label or "Instance") .. " path error: " .. pathError, 0)
 	end
 	return instance
+end
+
+local function trim(value)
+	return string.match(value, "^%s*(.-)%s*$")
+end
+
+local function parseFiniteNumber(value, label)
+	local parsed = tonumber(trim(value))
+	if not parsed or parsed ~= parsed or parsed == math.huge or parsed == -math.huge then
+		error(label .. " must be a finite number", 0)
+	end
+	return parsed
+end
+
+local function parseNumberList(value, allowedCounts, label, expectedFormat)
+	if type(value) ~= "string" then
+		error(label .. " must be encoded as a string", 0)
+	end
+
+	local parts = string.split(value, ",")
+	if not allowedCounts[#parts] then
+		error(label .. " expects " .. expectedFormat, 0)
+	end
+
+	local numbers = {}
+	for index, part in ipairs(parts) do
+		numbers[index] = parseFiniteNumber(part, label .. " component " .. index)
+	end
+	return numbers
+end
+
+local function parseColor3(value, label)
+	local normalized = trim(value)
+	if string.match(normalized, "^#%x%x%x%x%x%x$") then
+		local red = tonumber(string.sub(normalized, 2, 3), 16)
+		local green = tonumber(string.sub(normalized, 4, 5), 16)
+		local blue = tonumber(string.sub(normalized, 6, 7), 16)
+		return Color3.fromRGB(red, green, blue)
+	end
+
+	local numbers = parseNumberList(normalized, { [3] = true }, label, "three RGB values from 0 to 255 or #RRGGBB")
+	for index, component in ipairs(numbers) do
+		if component < 0 or component > 255 then
+			error(label .. " component " .. index .. " must be from 0 to 255", 0)
+		end
+	end
+	return Color3.fromRGB(numbers[1], numbers[2], numbers[3])
+end
+
+local function parseBrickColor(value, label)
+	local normalized = trim(value)
+	local numeric = tonumber(normalized)
+	local success, parsed = pcall(function()
+		if numeric and numeric % 1 == 0 then
+			return BrickColor.new(numeric)
+		end
+		return BrickColor.new(normalized)
+	end)
+	if not success then
+		error(label .. " must be a valid BrickColor name or number", 0)
+	end
+	if numeric and parsed.Number ~= numeric then
+		error(label .. " is not a valid BrickColor number", 0)
+	end
+	if not numeric and parsed.Name ~= normalized then
+		error(label .. " must use the exact BrickColor name, such as 'Bright red'", 0)
+	end
+	return parsed
+end
+
+local function parseEnumItem(value, currentValue, label)
+	local enumTypeName, itemName = string.match(trim(value), "^Enum%.([%w_]+)%.([%w_]+)$")
+	local enumType = enumTypeName and Enum[enumTypeName]
+	local enumItem = enumType and enumType[itemName]
+	if not enumItem then
+		error(label .. " expects a full enum value such as " .. tostring(currentValue), 0)
+	end
+	if enumItem.EnumType ~= currentValue.EnumType then
+		error(label .. " expects an item from " .. tostring(currentValue.EnumType), 0)
+	end
+	return enumItem
+end
+
+local function parsePropertyValue(instance, propertyName, rawValue)
+	if type(propertyName) ~= "string" or propertyName == "" or #propertyName > 200 then
+		error("Property name must be a non-empty string of at most 200 characters", 0)
+	end
+	if type(rawValue) ~= "string" or #rawValue > 4000 then
+		error("Property value must be a string of at most 4000 characters", 0)
+	end
+
+	local readable, currentValue = pcall(function()
+		return instance[propertyName]
+	end)
+	if not readable then
+		error("Unknown or unreadable property '" .. propertyName .. "' on " .. instance.ClassName, 0)
+	end
+
+	local valueType = typeof(currentValue)
+	local label = propertyName .. " (" .. valueType .. ")"
+	local normalized = trim(rawValue)
+	if valueType == "string" then
+		return rawValue
+	elseif valueType == "boolean" then
+		if normalized == "true" then
+			return true
+		elseif normalized == "false" then
+			return false
+		end
+		error(label .. " expects 'true' or 'false'", 0)
+	elseif valueType == "number" then
+		return parseFiniteNumber(normalized, label)
+	elseif valueType == "Vector3" then
+		local values = parseNumberList(normalized, { [3] = true }, label, "three comma-separated numbers: x, y, z")
+		return Vector3.new(values[1], values[2], values[3])
+	elseif valueType == "Vector2" then
+		local values = parseNumberList(normalized, { [2] = true }, label, "two comma-separated numbers: x, y")
+		return Vector2.new(values[1], values[2])
+	elseif valueType == "Color3" then
+		return parseColor3(normalized, label)
+	elseif valueType == "BrickColor" then
+		return parseBrickColor(normalized, label)
+	elseif valueType == "EnumItem" then
+		return parseEnumItem(normalized, currentValue, label)
+	elseif valueType == "CFrame" then
+		local values = parseNumberList(
+			normalized,
+			{ [3] = true, [12] = true },
+			label,
+			"3 position numbers or all 12 CFrame components"
+		)
+		return CFrame.new(table.unpack(values))
+	elseif valueType == "UDim" then
+		local values = parseNumberList(normalized, { [2] = true }, label, "two numbers: scale, offset")
+		return UDim.new(values[1], values[2])
+	elseif valueType == "UDim2" then
+		local values = parseNumberList(
+			normalized,
+			{ [4] = true },
+			label,
+			"four numbers: xScale, xOffset, yScale, yOffset"
+		)
+		return UDim2.new(values[1], values[2], values[3], values[4])
+	elseif valueType == "Rect" then
+		local values = parseNumberList(normalized, { [4] = true }, label, "four numbers: minX, minY, maxX, maxY")
+		return Rect.new(values[1], values[2], values[3], values[4])
+	elseif valueType == "NumberRange" then
+		local values = parseNumberList(normalized, { [1] = true, [2] = true }, label, "one value or min, max")
+		return #values == 1 and NumberRange.new(values[1]) or NumberRange.new(values[1], values[2])
+	elseif valueType == "NumberSequence" then
+		return NumberSequence.new(parseFiniteNumber(normalized, label .. " constant value"))
+	elseif valueType == "ColorSequence" then
+		return ColorSequence.new(parseColor3(normalized, label .. " constant color"))
+	elseif valueType == "Ray" then
+		local values = parseNumberList(
+			normalized,
+			{ [6] = true },
+			label,
+			"six numbers: originX, originY, originZ, directionX, directionY, directionZ"
+		)
+		return Ray.new(
+			Vector3.new(values[1], values[2], values[3]),
+			Vector3.new(values[4], values[5], values[6])
+		)
+	elseif valueType == "Instance" or (valueType == "nil" and string.sub(normalized, 1, 5) == "game.") then
+		local referenced, pathError = getInstanceFromPath(normalized)
+		if not referenced then
+			error(label .. " references an invalid instance path: " .. pathError, 0)
+		end
+		return referenced
+	elseif valueType == "nil" and normalized == "nil" then
+		return nil
+	elseif propertyName == "CustomPhysicalProperties" then
+		local values = parseNumberList(
+			normalized,
+			{ [5] = true },
+			propertyName,
+			"five numbers: density, friction, elasticity, frictionWeight, elasticityWeight"
+		)
+		return PhysicalProperties.new(values[1], values[2], values[3], values[4], values[5])
+	end
+
+	error("Unsupported property type " .. valueType .. " for '" .. propertyName .. "'", 0)
+end
+
+local function assignProperty(instance, propertyName, rawValue)
+	local value = parsePropertyValue(instance, propertyName, rawValue)
+	local assigned, assignmentError = pcall(function()
+		instance[propertyName] = value
+	end)
+	if not assigned then
+		error(
+			"Unable to assign "
+			.. propertyName
+			.. " on "
+			.. instance.ClassName
+			.. ": "
+			.. tostring(assignmentError),
+			0
+		)
+	end
+	local appliedValue = instance[propertyName]
+	return {
+		value = tostring(appliedValue),
+		type = typeof(appliedValue),
+	}
 end
 
 local function getInstancePath(instance)
@@ -1096,52 +1403,29 @@ end
 
 handlers["/instance/set"] = function(data)
 	local instance = requireInstanceFromPath(data.path)
-		
-	local value = data.value
+
 	if data.property == "Name" then
 		if instance == game then
 			error("The game root cannot be renamed")
 		end
-		assertAddressableName(value)
-		assertUniqueChildName(instance.Parent, value, instance)
-		instance.Name = value
-		return { path = getInstancePath(instance) }
+		assertAddressableName(data.value)
+		assertUniqueChildName(instance.Parent, data.value, instance)
+		instance.Name = data.value
+		return {
+			path = getInstancePath(instance),
+			property = data.property,
+			value = instance.Name,
+			type = "string",
+		}
 	end
-		
-	if value == "true" then
-		value = true
-	elseif value == "false" then
-		value = false
-	elseif tonumber(value) then
-		value = tonumber(value)
-	elseif string.match(value, "^%d+,%s*%d+,%s*%d+$") then
-		local parts = string.split(value, ",")
-		local a, b, c = tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3])
-		if a and b and c then
-			if a <= 255 and b <= 255 and c <= 255 and string.find(data.property, "Color") then
-				value = Color3.fromRGB(a, b, c)
-			else
-				value = Vector3.new(a, b, c)
-			end
-		end
-	elseif string.match(value, "^#%x%x%x%x%x%x$") then
-		local r = tonumber(string.sub(value, 2, 3), 16)
-		local g = tonumber(string.sub(value, 4, 5), 16)
-		local b = tonumber(string.sub(value, 6, 7), 16)
-		value = Color3.fromRGB(r, g, b)
-	elseif string.match(value, "^Enum%.") then
-		local parts = string.split(value, ".")
-		if #parts == 3 then
-			local enumType = Enum[parts[2]]
-			if enumType then
-				value = enumType[parts[3]]
-			end
-		end
-	end
-	
-	instance[data.property] = value
-	
-	return { path = getInstancePath(instance) }
+
+	local applied = assignProperty(instance, data.property, data.value)
+	return {
+		path = getInstancePath(instance),
+		property = data.property,
+		value = applied.value,
+		type = applied.type,
+	}
 end
 
 handlers["/instance/create"] = function(data)
@@ -1242,62 +1526,39 @@ handlers["/instance/bulk-set"] = function(data)
 	local updated = 0
 	local errors = {}
 	
-	for _, op in ipairs(data.operations) do
+	for index, op in ipairs(data.operations) do
 		local instance, pathError = getInstanceFromPath(op.path)
 		if not instance then
-			table.insert(errors, op.path .. ": " .. pathError)
+			table.insert(errors, "Operation " .. index .. " (" .. tostring(op.path) .. "): " .. pathError)
 		else
 			local success, err = pcall(function()
-				local value = op.value
 				if op.property == "Name" then
 					if instance == game then
 						error("The game root cannot be renamed")
 					end
-					assertAddressableName(value)
-					assertUniqueChildName(instance.Parent, value, instance)
-					instance.Name = value
+					assertAddressableName(op.value)
+					assertUniqueChildName(instance.Parent, op.value, instance)
+					instance.Name = op.value
 					return
 				end
 
-				-- Parse value based on type
-				if value == "true" then
-					value = true
-				elseif value == "false" then
-					value = false
-				elseif tonumber(value) then
-					value = tonumber(value)
-				elseif string.match(value, "^%d+,%s*%d+,%s*%d+$") then
-					local parts = string.split(value, ",")
-					local a, b, c = tonumber(parts[1]), tonumber(parts[2]), tonumber(parts[3])
-					if a and b and c then
-						if a <= 255 and b <= 255 and c <= 255 and string.find(op.property, "Color") then
-							value = Color3.fromRGB(a, b, c)
-						else
-							value = Vector3.new(a, b, c)
-						end
-					end
-				elseif string.match(value, "^#%x%x%x%x%x%x$") then
-					local r = tonumber(string.sub(value, 2, 3), 16)
-					local g = tonumber(string.sub(value, 4, 5), 16)
-					local b = tonumber(string.sub(value, 6, 7), 16)
-					value = Color3.fromRGB(r, g, b)
-				elseif string.match(value, "^Enum%.") then
-					local parts = string.split(value, ".")
-					if #parts == 3 then
-						local enumType = Enum[parts[2]]
-						if enumType then
-							value = enumType[parts[3]]
-						end
-					end
-				end
-				
-				instance[op.property] = value
+				assignProperty(instance, op.property, op.value)
 			end)
 			
 			if success then
 				updated = updated + 1
 			else
-				table.insert(errors, op.path .. "." .. op.property .. ": " .. tostring(err))
+				table.insert(
+					errors,
+					"Operation "
+					.. index
+					.. " ("
+					.. tostring(op.path)
+					.. "."
+					.. tostring(op.property)
+					.. "): "
+					.. tostring(err)
+				)
 			end
 		end
 	end

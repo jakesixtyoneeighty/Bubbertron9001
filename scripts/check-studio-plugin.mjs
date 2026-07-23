@@ -63,6 +63,32 @@ for (const fragment of requiredGameFragments) {
   }
 }
 
+const requiredPropertyFragments = [
+  "local function parsePropertyValue(instance, propertyName, rawValue)",
+  'valueType == "Vector3"',
+  'valueType == "BrickColor"',
+  'valueType == "UDim2"',
+  'valueType == "CFrame"',
+  'valueType == "NumberRange"',
+  "Use an exact path returned by create, search, or get_children.",
+  "property = data.property",
+  "type = applied.type",
+];
+
+for (const fragment of requiredPropertyFragments) {
+  if (!source.includes(fragment)) {
+    console.error(`Studio plugin is missing typed property support: ${fragment}`);
+    process.exit(1);
+  }
+}
+
+if (source.includes('string.match(value, "^%d+,%s*%d+,%s*%d+$")')) {
+  console.error(
+    "Studio property parsing must not regress to unsigned integer-only vectors",
+  );
+  process.exit(1);
+}
+
 const reviewedScripts = [
   "games/obby/scripts/obby-server.luau",
   "games/obby/scripts/obby-progress.client.luau",
@@ -128,3 +154,4 @@ if (source.includes("LogService:ClearOutput()")) {
 console.log("Studio plugin copies are identical");
 console.log("Studio playtest diagnostics are bounded and playtest writes are blocked");
 console.log("Studio starter-game assets, undo routes, verification, and rollback are intact");
+console.log("Studio properties use type-aware parsing and actionable path errors");

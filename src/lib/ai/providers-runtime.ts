@@ -1,6 +1,6 @@
 import { createAnthropic } from "@ai-sdk/anthropic";
 import { createOpenAI } from "@ai-sdk/openai";
-import { stepCountIs, streamText, type ToolSet } from "ai";
+import { streamText, type ToolSet } from "ai";
 import { robloxTools } from "@/lib/roblox";
 import { skillTools } from "@/lib/skills";
 import { appFetch } from "@/lib/http";
@@ -13,10 +13,11 @@ import {
 import { registerWorkerExecutor } from "@/lib/agent/worker-runtime";
 import { codexChat } from "./codex-chat";
 import { errorMessage, getToolError } from "./errors";
-import { ROBLOX_SYSTEM_PROMPT } from "./system-prompt";
+import { ASK_SYSTEM_PROMPT, ROBLOX_SYSTEM_PROMPT } from "./system-prompt";
 import { getStandardStepPolicy } from "./providers";
 import type { ChatOptions, ProviderType } from "./providers";
 import { createStandardWorkerExecutor } from "./worker-runtime";
+import { getAgentLoopStopReason } from "./agent-loop-policy";
 
 function createStandardRuntime(
   provider: Exclude<ProviderType, "codex">,
@@ -61,6 +62,7 @@ export async function chat(options: ChatOptions) {
     forceWebSearch = false,
     officialDocsOnly = false,
     planningRequired = false,
+    mode = "build",
     onToken,
     onToolCall,
     onToolResult,
@@ -95,24 +97,34 @@ export async function chat(options: ChatOptions) {
       model,
       officialDocsOnly
     );
-    const tools = {
-      ...robloxTools,
-      ...skillTools,
-      ...planningTools,
-      ...delegationTools,
-      web_search: runtime.webSearch,
-    } as ToolSet;
-    unregisterWorkerExecutor = registerWorkerExecutor(
-      runId,
-      createStandardWorkerExecutor(runtime.model, runtime.webSearch),
-    );
+    const tools = (mode === "ask"
+      ? forceWebSearch
+        ? { web_search: runtime.webSearch }
+        : {}
+      : {
+          ...robloxTools,
+          ...skillTools,
+          ...planningTools,
+          ...delegationTools,
+          web_search: runtime.webSearch,
+        }) as ToolSet;
+    if (mode === "build") {
+      unregisterWorkerExecutor = registerWorkerExecutor(
+        runId,
+        createStandardWorkerExecutor(runtime.model, runtime.webSearch),
+      );
+    }
     const toolNames = Object.keys(tools);
 
+    let loopStopReason: string | null = null;
     const result = streamText({
       model: runtime.model,
-      system: ROBLOX_SYSTEM_PROMPT,
+      system: mode === "ask" ? ASK_SYSTEM_PROMPT : ROBLOX_SYSTEM_PROMPT,
       tools,
-      stopWhen: stepCountIs(18),
+      stopWhen: ({ steps }) => {
+        loopStopReason = getAgentLoopStopReason(steps);
+        return loopStopReason !== null;
+      },
       maxRetries: 2,
       timeout: 2 * 60 * 1000,
       abortSignal: signal,
@@ -207,7 +219,8 @@ export async function chat(options: ChatOptions) {
     if (streamFailure) throw streamFailure;
     if (hasRunningPlan(runId)) {
       throw new Error(
-        "The model stopped before every plan step was resolved and verified"
+        loopStopReason ||
+          "The model stopped before every plan step was resolved and verified"
       );
     }
 

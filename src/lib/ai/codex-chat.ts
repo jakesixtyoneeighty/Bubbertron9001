@@ -17,7 +17,7 @@ import {
   type WorkerExecutor,
 } from "@/lib/agent";
 import { errorMessage, getToolError } from "./errors";
-import { ROBLOX_SYSTEM_PROMPT } from "./system-prompt";
+import { ASK_SYSTEM_PROMPT, ROBLOX_SYSTEM_PROMPT } from "./system-prompt";
 import {
   buildWorkerSystemPrompt,
   workerOutputSchema,
@@ -32,10 +32,14 @@ import type {
   ChatRunOptions,
   WebSource,
 } from "./providers";
+import {
+  getAgentLoopStopReason,
+  MAX_AGENT_ITERATIONS,
+  type AgentLoopStep,
+} from "./agent-loop-policy";
 
 const CODEX_API_ENDPOINT =
   "https://chatgpt.com/backend-api/codex/responses";
-const MAX_ITERATIONS = 18;
 const MAX_REQUEST_RETRIES = 2;
 const MAX_ERROR_BODY_LENGTH = 1_500;
 
@@ -683,6 +687,7 @@ export async function codexChat(
   callbacks: CodexChatCallbacks = {}
 ): Promise<string> {
   const conversationHistory = convertToCodexInput(messages);
+  const askMode = callbacks.mode === "ask";
   const workingFunctionTools = convertToolsToOpenAI(
     agentTools as unknown as ExecutableToolMap,
     CODEX_WORKING_TOOL_NAMES,
@@ -690,7 +695,8 @@ export async function codexChat(
   let fullText = "";
   let webSearchUsed = false;
   let planContinuationAttempts = 0;
-  const unregisterWorkerExecutor = callbacks.runId
+  const toolStepHistory: AgentLoopStep[] = [];
+  const unregisterWorkerExecutor = callbacks.runId && !askMode
     ? registerWorkerExecutor(
         callbacks.runId,
         createCodexWorkerExecutor(model),
@@ -698,18 +704,26 @@ export async function codexChat(
     : undefined;
 
   try {
-    for (let iteration = 0; iteration < MAX_ITERATIONS; iteration += 1) {
+    for (
+      let iteration = 0;
+      iteration < MAX_AGENT_ITERATIONS;
+      iteration += 1
+    ) {
       if (callbacks.signal?.aborted) {
         throw new DOMException("Agent run cancelled", "AbortError");
       }
 
       const needsPlan =
-        callbacks.planningRequired === true && !hasActivePlan(callbacks.runId);
+        !askMode && callbacks.planningRequired === true && !hasActivePlan(callbacks.runId);
       const needsForcedSearch =
         callbacks.forceWebSearch === true && !webSearchUsed;
-      const needsFinish = isPlanReadyToFinish(callbacks.runId);
-      const planStillRunning = hasRunningPlan(callbacks.runId);
-      const tools: CodexToolDefinition[] = needsPlan
+      const needsFinish = !askMode && isPlanReadyToFinish(callbacks.runId);
+      const planStillRunning = !askMode && hasRunningPlan(callbacks.runId);
+      const tools: CodexToolDefinition[] = askMode
+        ? needsForcedSearch
+          ? [webSearchTool(callbacks.officialDocsOnly === true)]
+          : []
+        : needsPlan
         ? convertToolsToOpenAI(
             agentTools as unknown as ExecutableToolMap,
             ["agent_create_plan"],
@@ -736,7 +750,8 @@ export async function codexChat(
         conversationHistory,
         tools,
         toolChoice,
-        callbacks
+        callbacks,
+        askMode ? ASK_SYSTEM_PROMPT : ROBLOX_SYSTEM_PROMPT,
       );
       fullText += result.text;
       webSearchUsed ||= result.webSearchUsed;
@@ -773,6 +788,7 @@ export async function codexChat(
         return fullText;
       }
 
+      const iterationOutputs: unknown[] = [];
       for (const toolCall of result.toolCalls) {
         conversationHistory.push({
           type: "function_call",
@@ -802,6 +818,7 @@ export async function codexChat(
           agentTools as unknown as ExecutableToolMap,
           { runId: callbacks.runId, ownerId: "coordinator" },
         );
+        iterationOutputs.push(output);
         const failure = getToolError(output);
         if (failure) {
           callbacks.onToolError?.({
@@ -824,10 +841,26 @@ export async function codexChat(
           output: JSON.stringify(output),
         });
       }
+
+      toolStepHistory.push({
+        toolResults: iterationOutputs.map((output) => ({ output })),
+      });
+      const loopStopReason = getAgentLoopStopReason(toolStepHistory);
+      if (
+        loopStopReason &&
+        !(hasActivePlan(callbacks.runId) && !hasRunningPlan(callbacks.runId))
+      ) {
+        throw new Error(loopStopReason);
+      }
+    }
+
+    if (hasActivePlan(callbacks.runId) && !hasRunningPlan(callbacks.runId)) {
+      callbacks.onFinish?.(fullText);
+      return fullText;
     }
 
     throw new Error(
-      `Agent stopped after ${MAX_ITERATIONS} steps to prevent an unsafe loop`
+      `Agent stopped after ${MAX_AGENT_ITERATIONS} steps to prevent an unsafe loop`
     );
   } catch (error) {
     const normalized =

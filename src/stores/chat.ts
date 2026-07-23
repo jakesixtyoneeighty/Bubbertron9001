@@ -1,4 +1,9 @@
 import { create } from "zustand";
+import { createJSONStorage, persist } from "zustand/middleware";
+import { STORAGE_KEYS } from "@/config/brand";
+import { createConversationStorage } from "@/lib/storage";
+
+export type ChatMode = "ask" | "build";
 
 export interface ToolCall {
   id: string;
@@ -22,7 +27,16 @@ export interface Message {
   toolCalls?: ToolCall[];
   sources?: MessageSource[];
   contextChips?: string[]; // Which context chips were applied to this message
-  createdAt: Date;
+  createdAt: string;
+}
+
+export interface SavedConversation {
+  id: string;
+  title: string;
+  messages: Message[];
+  mode: ChatMode;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface QuestionOption {
@@ -48,6 +62,9 @@ export interface PendingQuestion {
 
 export interface ChatState {
   messages: Message[];
+  conversations: SavedConversation[];
+  activeConversationId: string | null;
+  mode: ChatMode;
   isStreaming: boolean;
   error: string | null;
   pendingQuestion: PendingQuestion | null;
@@ -62,6 +79,10 @@ export interface ChatState {
   setStreaming: (streaming: boolean) => void;
   setError: (error: string | null) => void;
   clearMessages: () => void;
+  newConversation: () => void;
+  openConversation: (id: string) => void;
+  deleteConversation: (id: string) => void;
+  setMode: (mode: ChatMode) => void;
 
   // Question handling
   setPendingQuestion: (question: PendingQuestion | null) => void;
@@ -69,34 +90,91 @@ export interface ChatState {
   answerQuestion: (answers: (string | string[])[]) => void;
 }
 
-export const useChatStore = create<ChatState>()((set, get) => ({
-  messages: [],
+const DEFAULT_TITLE = "New conversation";
+
+function createId() {
+  return typeof crypto.randomUUID === "function"
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function conversationTitle(messages: Message[]) {
+  const firstUserMessage = messages.find((message) => message.role === "user");
+  if (!firstUserMessage) return DEFAULT_TITLE;
+  const oneLine = firstUserMessage.content.replace(/\s+/g, " ").trim();
+  return oneLine.length > 52 ? `${oneLine.slice(0, 49)}...` : oneLine;
+}
+
+function withSavedMessages(
+  state: ChatState,
+  messages: Message[],
+): Pick<ChatState, "messages" | "conversations" | "activeConversationId"> {
+  const now = new Date().toISOString();
+  const conversationId = state.activeConversationId || createId();
+  const existing = state.conversations.find(
+    (conversation) => conversation.id === conversationId,
+  );
+  const saved: SavedConversation = {
+    id: conversationId,
+    title: conversationTitle(messages),
+    messages,
+    mode: state.mode,
+    createdAt: existing?.createdAt || now,
+    updatedAt: now,
+  };
+
+  return {
+    messages,
+    activeConversationId: conversationId,
+    conversations: [
+      saved,
+      ...state.conversations.filter(
+        (conversation) => conversation.id !== conversationId,
+      ),
+    ],
+  };
+}
+
+const initialTransientState = {
   isStreaming: false,
   error: null,
   pendingQuestion: null,
   questionResolver: null,
+};
+
+export const useChatStore = create<ChatState>()(
+  persist(
+    (set, get) => ({
+      messages: [],
+      conversations: [],
+      activeConversationId: null,
+      mode: "build",
+      ...initialTransientState,
 
   addMessage: (message) => {
-    const id = crypto.randomUUID();
-    set((state) => ({
-      messages: [
+    const id = createId();
+    set((state) =>
+      withSavedMessages(state, [
         ...state.messages,
-        { ...message, id, createdAt: new Date() },
-      ],
-    }));
+        { ...message, id, createdAt: new Date().toISOString() },
+      ]),
+    );
     return id;
   },
 
   updateMessage: (id, content) =>
-    set((state) => ({
-      messages: state.messages.map((msg) =>
-        msg.id === id ? { ...msg, content } : msg
+    set((state) =>
+      withSavedMessages(
+        state,
+        state.messages.map((msg) =>
+          msg.id === id ? { ...msg, content } : msg,
+        ),
       ),
-    })),
+    ),
 
   addToolCall: (messageId, toolCall) =>
-    set((state) => ({
-      messages: state.messages.map((msg) =>
+    set((state) =>
+      withSavedMessages(state, state.messages.map((msg) =>
         msg.id === messageId
           ? {
               ...msg,
@@ -106,12 +184,12 @@ export const useChatStore = create<ChatState>()((set, get) => ({
               ],
             }
           : msg
-      ),
-    })),
+      )),
+    ),
 
   updateToolCall: (messageId, toolCallId, update) =>
-    set((state) => ({
-      messages: state.messages.map((msg) =>
+    set((state) =>
+      withSavedMessages(state, state.messages.map((msg) =>
         msg.id === messageId
           ? {
               ...msg,
@@ -120,29 +198,82 @@ export const useChatStore = create<ChatState>()((set, get) => ({
               ),
             }
           : msg
-      ),
-    })),
+      )),
+    ),
 
   addSource: (messageId, source) =>
-    set((state) => ({
-      messages: state.messages.map((message) => {
+    set((state) =>
+      withSavedMessages(state, state.messages.map((message) => {
         if (message.id !== messageId) return message;
         const sources = message.sources || [];
         if (sources.some((item) => item.url === source.url)) return message;
         return { ...message, sources: [...sources, source] };
-      }),
-    })),
+      })),
+    ),
 
   setStreaming: (streaming) => set({ isStreaming: streaming }),
   
   setError: (error) => set({ error }),
 
   clearMessages: () =>
+    set((state) => ({
+      conversations: state.activeConversationId
+        ? state.conversations.filter(
+            (conversation) => conversation.id !== state.activeConversationId,
+          )
+        : state.conversations,
+      messages: [],
+      activeConversationId: null,
+      mode: "build",
+      ...initialTransientState,
+    })),
+
+  newConversation: () =>
     set({
       messages: [],
-      error: null,
-      pendingQuestion: null,
-      questionResolver: null,
+      activeConversationId: null,
+      mode: "build",
+      ...initialTransientState,
+    }),
+
+  openConversation: (id) =>
+    set((state) => {
+      const conversation = state.conversations.find((item) => item.id === id);
+      if (!conversation || state.isStreaming) return state;
+      return {
+        messages: conversation.messages,
+        activeConversationId: conversation.id,
+        mode: conversation.mode,
+        ...initialTransientState,
+      };
+    }),
+
+  deleteConversation: (id) =>
+    set((state) => {
+      const conversations = state.conversations.filter(
+        (conversation) => conversation.id !== id,
+      );
+      if (state.activeConversationId !== id) return { conversations };
+      return {
+        conversations,
+        messages: [],
+        activeConversationId: null,
+        mode: "build",
+        ...initialTransientState,
+      };
+    }),
+
+  setMode: (mode) =>
+    set((state) => {
+      if (!state.activeConversationId) return { mode };
+      return {
+        mode,
+        conversations: state.conversations.map((conversation) =>
+          conversation.id === state.activeConversationId
+            ? { ...conversation, mode, updatedAt: new Date().toISOString() }
+            : conversation,
+        ),
+      };
     }),
 
   // Question handling
@@ -157,4 +288,17 @@ export const useChatStore = create<ChatState>()((set, get) => ({
       set({ pendingQuestion: null, questionResolver: null });
     }
   },
-}));
+    }),
+    {
+      name: STORAGE_KEYS.conversations,
+      version: 1,
+      storage: createJSONStorage(createConversationStorage),
+      partialize: (state) => ({
+        messages: state.messages,
+        conversations: state.conversations,
+        activeConversationId: state.activeConversationId,
+        mode: state.mode,
+      }),
+    },
+  ),
+);

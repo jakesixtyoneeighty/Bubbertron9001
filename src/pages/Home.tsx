@@ -25,6 +25,8 @@ import { QuestionPrompt } from "@/components/chat/QuestionPrompt";
 import { InstancePicker } from "@/components/chat/InstancePicker";
 import { PlanView } from "@/components/chat/PlanView";
 import { SourceList } from "@/components/chat/SourceList";
+import { ChatModeToggle } from "@/components/chat/ChatModeToggle";
+import { ConversationHistory } from "@/components/chat/ConversationHistory";
 import { PlaytestFix, PLAYTEST_FIX_PROMPT } from "@/components/chat/PlaytestFix";
 import { OneClickGamesButton } from "@/components/games/OneClickGamesButton";
 import { ChatActions } from "@/components/QuickActions";
@@ -42,6 +44,10 @@ import {
 } from "@/lib/roblox/questions";
 import { useAgentStore } from "@/stores/agent";
 import { isAbortError } from "@/lib/ai/errors";
+import {
+  completedTaskMessage,
+  failedTaskMessage,
+} from "@/lib/ai/task-status-message";
 import { BRAND } from "@/config/brand";
 import { useAppShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { improvePrompt } from "@/lib/ai/prompt-improver";
@@ -82,6 +88,15 @@ const SUGGESTIONS = [
   "Create an inventory system",
   "Add achievements that unlock badges",
   "Build a trading system between players",
+];
+
+const ASK_SUGGESTIONS = [
+  "How should I structure a round-based game?",
+  "Explain RemoteEvents like I'm new to Roblox",
+  "What makes an obby feel fun and fair?",
+  "Help me think through a game idea",
+  "What's the difference between server and client scripts?",
+  "How can I make my game work well on mobile?",
 ];
 
 // Mute/unmute button for the synthesized sound effects
@@ -412,7 +427,7 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
   return (
     <div
       className={cn(
-        "flex items-center gap-2 text-sm px-3 py-1 rounded-full border transition-colors",
+        "flex items-center gap-2 text-sm px-2 sm:px-3 py-1 rounded-full border transition-colors",
         status === "connected"
           ? "text-primary border-primary/30 bg-primary/10"
           : "text-muted-foreground border-border bg-muted/30"
@@ -430,7 +445,7 @@ function StatusBadge({ status }: { status: ConnectionStatus }) {
         )}
         <span className={cn("relative inline-flex w-2 h-2 rounded-full", color)} />
       </span>
-      <span>{label}</span>
+      <span className="hidden md:inline">{label}</span>
     </div>
   );
 }
@@ -444,6 +459,7 @@ export function Home() {
   const [confettiTrigger, setConfettiTrigger] = useState(0);
   const {
     messages,
+    mode,
     isStreaming,
     error,
     pendingQuestion,
@@ -458,6 +474,7 @@ export function Home() {
     setQuestionResolver,
     answerQuestion,
     clearMessages,
+    setMode,
   } = useChatStore();
   const { hasApiKey } = useSettingsStore();
   const hasOAuthSession = useAuthStore((state) =>
@@ -495,11 +512,13 @@ export function Home() {
     }
   }, [studioStatus]);
 
-  // Shuffle and pick random suggestions on mount and when messages clear
+  // Shuffle suggestions for the active mode and refresh them for a new chat.
   useEffect(() => {
-    const shuffled = [...SUGGESTIONS].sort(() => Math.random() - 0.5);
+    const shuffled = [...(mode === "ask" ? ASK_SUGGESTIONS : SUGGESTIONS)].sort(
+      () => Math.random() - 0.5,
+    );
     setDisplayedSuggestions(shuffled.slice(0, 4));
-  }, [messages.length === 0]);
+  }, [messages.length === 0, mode]);
 
   // Set up the ask_user handler
   useEffect(() => {
@@ -560,10 +579,10 @@ export function Home() {
     if (requestChips.includes("web")) {
       prefixes.push("[Search the web for information]");
     }
-    if (requestChips.includes("search-models")) {
+    if (mode === "build" && requestChips.includes("search-models")) {
       prefixes.push("[Search the Creator Store for free models if needed]");
     }
-    if (requestChips.includes("plan")) {
+    if (mode === "build" && requestChips.includes("plan")) {
       prefixes.push("[Create a detailed plan before making changes]");
     }
     const chipContext = prefixes.join(" ");
@@ -645,9 +664,19 @@ export function Home() {
         onFinish: () => {
           console.log("[Home] Stream finished, total length:", fullText.length);
           playSound("receive");
-          const agent = useAgentStore.getState();
+          let agent = useAgentStore.getState();
           if (!agent.plan && agent.phase !== "completed") {
             agent.completeRun("Response completed");
+            agent = useAgentStore.getState();
+          }
+          if (!fullText.trim()) {
+            updateMessage(
+              assistantId,
+              completedTaskMessage({
+                summary: agent.plan?.completionSummary,
+                verification: agent.plan?.verification,
+              }),
+            );
           }
         },
         onError: (error) => {
@@ -655,11 +684,13 @@ export function Home() {
             console.error("[Home] Stream error:", error);
             playSound("error");
             setError(error.message);
+            updateMessage(assistantId, failedTaskMessage(error.message));
             useAgentStore.getState().failRun(error.message);
           }
         },
         signal: controller.signal,
-        forcePlan: requestChips.includes("plan"),
+        mode,
+        forcePlan: mode === "build" && requestChips.includes("plan"),
         forceWebSearch:
           requestChips.includes("web") || requestChips.includes("docs"),
         officialDocsOnly:
@@ -683,6 +714,7 @@ export function Home() {
     isStreaming,
     messages,
     activeChips,
+    mode,
     addMessage,
     updateMessage,
     addToolCall,
@@ -713,6 +745,17 @@ export function Home() {
     }
   };
 
+  const handleModeChange = (nextMode: "ask" | "build") => {
+    playSound("click");
+    setMode(nextMode);
+    setActiveChips((current) =>
+      nextMode === "ask"
+        ? current.filter((chip) => chip === "docs" || chip === "web")
+        : current,
+    );
+    useAgentStore.getState().reset();
+  };
+
   const handleStop = () => {
     abortControllerRef.current?.abort();
     abortControllerRef.current = null;
@@ -739,9 +782,10 @@ export function Home() {
       <div className="h-screen flex flex-col bg-background relative">
         <AuroraBackground />
         {/* Header */}
-        <header className="relative z-10 flex items-center justify-between px-6 py-4 border-b glass-bar">
-          <Logo />
-          <div className="flex items-center gap-3">
+        <header className="relative z-10 flex items-center justify-between px-3 sm:px-6 py-4 border-b glass-bar">
+          <Logo className="gap-2 [&>span]:text-lg sm:[&>span]:text-2xl" />
+          <div className="flex items-center gap-1 sm:gap-3">
+            <ConversationHistory disabled={isStreaming} />
             <StatusBadge status={studioStatus} />
             <SoundToggle />
             <SettingsDialog />
@@ -750,8 +794,9 @@ export function Home() {
 
         {!isConnected && (
           <div className="relative z-10 border-b border-amber-400/20 bg-amber-400/10 px-4 py-2 text-center text-sm text-amber-300">
-            Research mode — web, documentation, planning, and skills are
-            available; Studio editing is paused.
+            {mode === "ask"
+              ? "Ask mode — talk things through without changing Studio."
+              : "Research mode — web, documentation, planning, and skills are available; Studio editing is paused."}
           </div>
         )}
 
@@ -764,11 +809,12 @@ export function Home() {
                 <LogoMark className="w-24 h-24 glow-lime" />
               </div>
               <h1 className="text-4xl font-heading text-gradient-hero">
-                Let's build some cool shit!
+                {mode === "ask" ? "Let's talk Roblox" : "Let's build some cool shit!"}
               </h1>
               <p className="text-muted-foreground max-w-md mx-auto">
-                Meet B9, your Roblox master builder. He's a beast. Drop your ideas below —
-                scripts, systems, GUIs, the whole world. If it can be built, B9 can build it.
+                {mode === "ask"
+                  ? "Ask questions, explore ideas, or talk through code. B9 won't change Studio until you switch to Build."
+                  : "Meet B9, your Roblox master builder. He's a beast. Drop your ideas below — scripts, systems, GUIs, the whole world. If it can be built, B9 can build it."}
               </p>
             </div>
 
@@ -778,6 +824,7 @@ export function Home() {
                 onChipClick={handleChipClick}
                 activeChips={activeChips}
                 disabled={isStreaming || !hasConfiguredProvider}
+                visibleChips={mode === "ask" ? ["docs", "web"] : undefined}
               />
               <PromptInput
                 value={input}
@@ -800,7 +847,9 @@ export function Home() {
                     isImproving
                       ? "Powering up your prompt..."
                       : hasConfiguredProvider
-                        ? "Ask me anything about Roblox development..."
+                        ? mode === "ask"
+                          ? "Talk through an idea or ask a question..."
+                          : "Tell B9 what you want to build..."
                         : "Configure an API key in settings to start..."
                   }
                   disabled={!hasConfiguredProvider || isImproving}
@@ -816,12 +865,21 @@ export function Home() {
                         <Icon name="link" size="sm" />
                       </Button>
                     </PromptInputAction>
-                    <InstancePicker
-                      onSelect={(path) => setInput((prev) => prev + `@${path} `)}
-                    />
+                    {mode === "build" && (
+                      <InstancePicker
+                        onSelect={(path) => setInput((prev) => prev + `@${path} `)}
+                      />
+                    )}
                   </div>
                   <div className="flex items-center gap-2">
-                    <ModelSelector disabled={!hasConfiguredProvider} />
+                    <ChatModeToggle
+                      mode={mode}
+                      onChange={handleModeChange}
+                      disabled={isStreaming}
+                    />
+                    <div className="hidden sm:block">
+                      <ModelSelector disabled={!hasConfiguredProvider} />
+                    </div>
                     {/* Improve Prompt Button */}
                     <PromptInputAction
                       tooltip={`Improve prompt for ${BRAND.name}`}
@@ -870,25 +928,30 @@ export function Home() {
                 <PromptSuggestion
                   key={suggestion}
                   onClick={() => handleSuggestionClick(suggestion)}
-                  className={cn("rounded-xl", `stagger-${(i % 5) + 1}`)}
+                  className={cn(
+                    "h-auto min-h-10 max-w-full whitespace-normal px-4 py-2 text-center",
+                    `stagger-${(i % 5) + 1}`,
+                  )}
                 >
                   {suggestion}
                 </PromptSuggestion>
               ))}
             </div>
 
-            <div className="flex flex-wrap justify-center gap-2 animate-slide-up stagger-4">
-              <OneClickGamesButton
-                studioConnected={isConnected}
-                disabled={isStreaming}
-                onPlaytestFix={() => void handleSubmit(PLAYTEST_FIX_PROMPT)}
-              />
-              <PlaytestFix
-                onAnalyze={(prompt) => void handleSubmit(prompt)}
-                disabled={isStreaming || !hasConfiguredProvider}
-                studioConnected={isConnected}
-              />
-            </div>
+            {mode === "build" && (
+              <div className="flex flex-wrap justify-center gap-2 animate-slide-up stagger-4">
+                <OneClickGamesButton
+                  studioConnected={isConnected}
+                  disabled={isStreaming}
+                  onPlaytestFix={() => void handleSubmit(PLAYTEST_FIX_PROMPT)}
+                />
+                <PlaytestFix
+                  onAnalyze={(prompt) => void handleSubmit(prompt)}
+                  disabled={isStreaming || !hasConfiguredProvider}
+                  studioConnected={isConnected}
+                />
+              </div>
+            )}
 
             {/* Not configured warning */}
             {!hasConfiguredProvider && (
@@ -919,27 +982,34 @@ export function Home() {
       <ConfettiBurst trigger={confettiTrigger} />
 
       {/* Header */}
-      <header className="relative z-10 flex items-center justify-between px-6 py-3 border-b glass-bar">
-        <div className="flex items-center gap-3">
+      <header className="relative z-10 flex items-center justify-between px-3 sm:px-6 py-3 border-b glass-bar">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <ConversationHistory disabled={isStreaming} />
           <LogoMark className="w-8 h-8 rounded-xl glow-lime" />
-          <span className="text-lg font-logo tracking-tight">{BRAND.name}</span>
+          <span className="hidden text-lg font-logo tracking-tight sm:inline">{BRAND.name}</span>
         </div>
         <div className="flex items-center gap-2">
           <StatusBadge status={studioStatus} />
           <div className="h-4 w-px bg-border mx-1" />
-          <SoundToggle />
-          <OneClickGamesButton
-            compact
-            studioConnected={isConnected}
-            disabled={isStreaming}
-            onPlaytestFix={() => void handleSubmit(PLAYTEST_FIX_PROMPT)}
-          />
-          <PlaytestFix
-            compact
-            onAnalyze={(prompt) => void handleSubmit(prompt)}
-            disabled={isStreaming || !hasConfiguredProvider}
-            studioConnected={isConnected}
-          />
+          <div className="hidden sm:block">
+            <SoundToggle />
+          </div>
+          {mode === "build" && (
+            <div className="hidden items-center gap-2 lg:flex">
+              <OneClickGamesButton
+                compact
+                studioConnected={isConnected}
+                disabled={isStreaming}
+                onPlaytestFix={() => void handleSubmit(PLAYTEST_FIX_PROMPT)}
+              />
+              <PlaytestFix
+                compact
+                onAnalyze={(prompt) => void handleSubmit(prompt)}
+                disabled={isStreaming || !hasConfiguredProvider}
+                studioConnected={isConnected}
+              />
+            </div>
+          )}
           <ChatActions
             onClear={() => {
               playSound("click");
@@ -953,8 +1023,9 @@ export function Home() {
 
       {!isConnected && (
         <div className="relative z-10 border-b border-amber-400/20 bg-amber-400/10 px-4 py-2 text-center text-sm text-amber-300">
-          Research mode — Studio editing tools will resume after the bridge
-          reconnects.
+          {mode === "ask"
+            ? "Ask mode — talk things through without changing Studio."
+            : "Research mode — Studio editing tools will resume after the bridge reconnects."}
         </div>
       )}
 
@@ -1070,7 +1141,9 @@ export function Home() {
             <div className="flex items-center gap-3 px-4 py-3 glass rounded-xl max-w-fit mx-auto animate-glow">
               <Loader variant="wave" size="sm" />
               <span className="text-sm text-muted-foreground">
-                {BRAND.name} is building...
+                {mode === "ask"
+                  ? `${BRAND.shortName} is thinking...`
+                  : `${BRAND.name} is building...`}
               </span>
             </div>
           )}
@@ -1089,6 +1162,7 @@ export function Home() {
             onChipClick={handleChipClick}
             activeChips={activeChips}
             disabled={isStreaming}
+            visibleChips={mode === "ask" ? ["docs", "web"] : undefined}
           />
           <PromptInput
             value={input}
@@ -1107,7 +1181,13 @@ export function Home() {
               </div>
             )}
             <PromptInputTextarea
-              placeholder={isImproving ? "Powering up your prompt..." : "Ask a follow-up..."}
+              placeholder={
+                isImproving
+                  ? "Powering up your prompt..."
+                  : mode === "ask"
+                    ? "Keep talking..."
+                    : "Ask a follow-up or request a change..."
+              }
               className={cn(
                 "min-h-[44px] text-base text-cream placeholder:text-muted-foreground",
                 isImproving && "opacity-60"
@@ -1121,12 +1201,21 @@ export function Home() {
                     <Icon name="link" size="sm" />
                   </Button>
                 </PromptInputAction>
-                <InstancePicker
-                  onSelect={(path) => setInput((prev) => prev + `@${path} `)}
-                />
+                {mode === "build" && (
+                  <InstancePicker
+                    onSelect={(path) => setInput((prev) => prev + `@${path} `)}
+                  />
+                )}
               </div>
               <div className="flex items-center gap-2">
-                <ModelSelector />
+                <ChatModeToggle
+                  mode={mode}
+                  onChange={handleModeChange}
+                  disabled={isStreaming}
+                />
+                <div className="hidden sm:block">
+                  <ModelSelector />
+                </div>
                 {/* Improve Prompt Button */}
                 <PromptInputAction
                   tooltip={`Improve prompt for ${BRAND.name} (AI enhances your message)`}

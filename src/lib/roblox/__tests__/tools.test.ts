@@ -27,6 +27,7 @@ import {
   robloxBulkSetProperty,
   robloxGetRecentLogs,
   robloxInsertAsset,
+  robloxSetProperty,
   robloxToolboxSearch,
   robloxTools,
   setAskUserHandler,
@@ -323,6 +324,42 @@ describe("Studio bulk mutation results", () => {
       retryable: true,
       count: 1,
     })
+  })
+
+  it("preserves signed decimal vectors and returns Studio's applied type", async () => {
+    vi.mocked(studioRequest).mockResolvedValue({
+      success: true,
+      data: {
+        path: "game.Workspace.TacoTurret.Base",
+        property: "Position",
+        value: "0, 2.5, -35",
+        type: "Vector3",
+      },
+    })
+
+    await expect(
+      executeTool(robloxSetProperty, {
+        path: "game.Workspace.TacoTurret.Base",
+        property: "Position",
+        value: "0, 2.5, -35",
+      })
+    ).resolves.toEqual({
+      success: true,
+      path: "game.Workspace.TacoTurret.Base",
+      property: "Position",
+      value: "0, 2.5, -35",
+      type: "Vector3",
+    })
+    expect(studioRequest).toHaveBeenCalledWith(
+      "/instance/set",
+      {
+        path: "game.Workspace.TacoTurret.Base",
+        property: "Position",
+        value: "0, 2.5, -35",
+      },
+      undefined,
+      {},
+    )
   })
 })
 

@@ -13,6 +13,7 @@ export const STORAGE_KEYS = {
   models: "bubbertron9001_models_cache",
   codexAuth: "bubbertron9001_chatgpt_auth",
   setup: "bubbertron9001-setup",
+  conversations: "bubbertron9001-conversations",
 } as const;
 
 // The product briefly shipped under the misspelled Bubberton9001 name. Keep
