@@ -35,6 +35,19 @@ export const SKILL_CATALOG = [
     keywords: ["gotchas", "pitfalls", "production", "bugs"],
   },
   {
+    name: "roblox-game-design",
+    category: "Core language and architecture",
+    description:
+      "Use before building a new Roblox game, game mode, or materially ambiguous gameplay feature.",
+    keywords: [
+      "brainstorm",
+      "design",
+      "requirements",
+      "game-mode",
+      "vertical-slice",
+    ],
+  },
+  {
     name: "roblox-monetization",
     category: "Monetization",
     description:
@@ -187,6 +200,52 @@ export const SKILL_CATALOG = [
     description:
       "Use when reviewing Roblox or Luau code for security, performance, monetization, data persistence, or architecture risks.",
     keywords: ["audit", "quality", "bugs", "review"],
+  },
+  {
+    name: "roblox-test-driven-development",
+    category: "Workflow",
+    description:
+      "Use when implementing testable Roblox behavior or fixing a Luau bug before writing production code.",
+    keywords: [
+      "tdd",
+      "test",
+      "tests",
+      "testing",
+      "test-first",
+      "write",
+      "luau",
+      "implementation",
+      "behavior",
+      "regression",
+      "datastore",
+      "persistence",
+      "skip-tests",
+    ],
+  },
+  {
+    name: "roblox-plan-execution",
+    category: "Workflow",
+    description:
+      "Use when turning approved Roblox requirements into a multi-step Studio plan or reviewing a plan before mutation.",
+    keywords: ["plan", "execute", "requirements", "success-criteria", "readback"],
+  },
+  {
+    name: "roblox-verification",
+    category: "Workflow",
+    description:
+      "Use before claiming a Roblox Studio change is complete, fixed, working, safe, or ready to publish.",
+    keywords: [
+      "verify",
+      "prove",
+      "evidence",
+      "studio",
+      "changes",
+      "are",
+      "complete",
+      "done",
+      "playtest",
+      "readback",
+    ],
   },
   {
     name: "roblox-publish-checklist",

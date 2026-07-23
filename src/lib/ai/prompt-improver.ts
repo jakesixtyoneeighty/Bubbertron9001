@@ -24,7 +24,7 @@ ${BRAND.name} can:
 - Execute Luau code in Studio
 - Ask user questions when needed
 - Search current web and official Roblox documentation with citations
-- Search and progressively load 30 focused Roblox engineering skills
+- Search and progressively load 34 focused Roblox engineering skills
 - Plan, execute, verify, and correct multi-step work
 
 When improving prompts, you should:

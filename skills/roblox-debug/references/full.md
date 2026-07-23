@@ -3,7 +3,9 @@
 
 > **Code in this reference is illustrative. Adapt to your game and verify in Studio before production use.**
 
-You are performing an iterative debug loop on a Roblox project. Follow these 7 steps. The loop has a maximum of **5 iterations** before escalating to the user.
+You are performing an evidence-led debug loop on a Roblox project. No fix may
+precede a reproducible failure and an evidence-backed root-cause hypothesis.
+After three failed fixes, stop and discuss architecture before a fourth.
 
 ---
 
@@ -19,6 +21,7 @@ Record:
 - Error message (exact text)
 - Stack trace (script name + line number)
 - When it occurs (on join, on action, on timer, etc.)
+- Exact reproduction and whether it is consistent
 
 ---
 
@@ -31,6 +34,10 @@ Read the relevant script(s) from the synced folder (or via MCP if in MCP-Only Mo
 ## Step 3: Root Cause Analysis
 
 Analyze the error against common Roblox issue categories. Load `skills/roblox-sharp-edges/SKILL.md` for known gotchas.
+
+Check recent changes and find a similar working path. Trace the faulty value or
+state backward across client, remote, server, and service boundaries until its
+source is identified. Do not patch the final symptom.
 
 Categorize the error:
 - **Syntax** - Missing `end`, typos, incorrect syntax
@@ -48,12 +55,10 @@ Identify:
 
 ---
 
-## Step 4: Generate Fix
+## Step 4: Hypothesis and Minimal Test
 
-Produce corrected Luau code with an explanation of:
-- What was wrong (the root cause)
-- Why the fix works
-- Any related code that should also be checked
+State one hypothesis: “X is the root cause because Y.” Capture the smallest
+failing reproduction, then test one variable. Never bundle speculative fixes.
 
 If the fix involves architectural changes (not just a line fix), explain the change clearly and suggest where else the same pattern applies.
 
@@ -61,7 +66,8 @@ If the fix involves architectural changes (not just a line fix), explain the cha
 
 ## Step 5: Apply & Test
 
-Write the fix to the synced file. If MCP is available, use it to verify the fix applies cleanly. If playtest is running, check for errors after the fix.
+Write one root-cause fix. Read the exact resource back to prove deployment, then
+rerun the original reproduction and relevant regression checks.
 
 If in offline mode, provide the corrected code with clear before/after diff and manual test instructions.
 
@@ -72,10 +78,12 @@ If in offline mode, provide the corrected code with clear before/after diff and 
 Check if the error is resolved:
 - If **resolved**: Proceed to Step 7
 - If **new errors appear**: Update error record, return to Step 1 with new information
-- If **same error persists**: Try a different root cause hypothesis, return to Step 3
-- If **iteration count = 5**: Stop and escalate to user with full diagnosis
+- If **same error persists**: Do not stack another change; return to Step 1 with
+  the new evidence and form a different hypothesis
+- If **three fixes failed**: Stop and discuss whether the architecture is wrong
+  before attempting fix four
 
-Track iteration count. After 5 attempts, output:
+At escalation, output:
 1. All attempted fixes and why each was rejected
 2. Remaining hypotheses
 3. Recommended next steps (manual investigation, Roblox DevForum search, etc.)

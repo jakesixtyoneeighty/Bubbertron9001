@@ -26,7 +26,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - **Rust Bridge** (`src-tauri/src/bridge.rs`): HTTP server on port 3001 that queues requests; uses oneshot channels for async request/response matching
 - **Studio Plugin** (`studio-plugin/bubbertron9001-bridge.server.lua`): Luau plugin polls the bridge, executes commands, and creates undo waypoints
 - **Agent Runtime** (`src/lib/agent/`): planning, progress, verification, and repair tools
-- **Skill Runtime** (`src/lib/skills/` and `skills/`): compact catalog with lazy quick/full loading for 30 Roblox skills
+- **Skill Runtime** (`src/lib/skills/` and `skills/`): compact catalog with lazy quick/full loading for 34 Roblox skills
 
 The polling pattern is necessary because Roblox Studio can only make HTTP requests, not receive them.
 
@@ -47,7 +47,7 @@ npx tsc --noEmit       # Type checking
 | `src/lib/ai/system-prompt.ts` | B9 operating rules shared across providers |
 | `src/lib/agent/planning.ts` | Plan creation, progress updates, verification, and repair tools |
 | `src/lib/skills/` | Lazy allowlisted skill search and loading runtime |
-| `skills/` | 30 vendored Roblox Brain skills and deeper references |
+| `skills/` | 30 vendored Roblox Brain skills plus 4 adapted workflow skills and deeper references |
 | `src/lib/roblox/tools.ts` | Studio, bulk, toolbox, and question tools |
 | `src/lib/roblox/client.ts` | HTTP client for bridge server communication |
 | `src-tauri/src/bridge.rs` | Bridge endpoints under `/bubbertron9001/*`; legacy `/stud/*` aliases remain for compatibility |

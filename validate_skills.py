@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """
-Validate the vendored roblox-brain skills for size and structure compliance.
+Validate B9's allowlisted Roblox skills for size and structure compliance.
 
 Vendored from jakesixtyoneeighty/roblox-brain at commit
 71036b0b7cc4d140c116900658cf42e44ae551aa and distributed under the MIT
 license reproduced in skills/NOTICE.md.
+
+Selected workflow skills are adapted from obra/superpowers v6.1.1 under the
+MIT license reproduced in skills/NOTICE.md.
 
 Checks:
 - SKILL.md under 3,000 chars

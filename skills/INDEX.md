@@ -1,6 +1,7 @@
 # Skill Index
 
-Compact index of all roblox-brain skills (~2,800 tokens). Load this at startup to know what's available, then load specific skills as needed.
+Compact index of B9's allowlisted Roblox skills. Load this at startup to know
+what is available, then load specific skills as needed.
 
 ## Core Language & Architecture
 
@@ -11,6 +12,7 @@ Compact index of all roblox-brain skills (~2,800 tokens). Load this at startup t
 | `roblox-luau-patterns` | Use for Luau metatable classes, inheritance, Promises, coroutines, pcall, module structure, services, and Roblox coding patterns. |
 | `roblox-architecture` | Use when starting or refactoring a Roblox project, choosing service or module structure, or making client-server architecture decisions. |
 | `roblox-sharp-edges` | Use before shipping or reviewing Roblox code involving player data, remotes, monetization, or memory to catch high-impact production footguns. |
+| `roblox-game-design` | Use before building a new Roblox game, game mode, or materially ambiguous gameplay feature. |
 
 ## Monetization
 
@@ -63,6 +65,9 @@ Compact index of all roblox-brain skills (~2,800 tokens). Load this at startup t
 |-------|-------------|
 | `roblox-debug` | Use when diagnosing Roblox or Luau errors, crashes, or unexpected behavior with an iterative reproduce, inspect, fix, and verify loop. |
 | `roblox-code-review` | Use when reviewing Roblox or Luau code for security, performance, monetization, data persistence, or architecture risks. |
+| `roblox-test-driven-development` | Use when implementing testable Roblox behavior or fixing a Luau bug before writing production code. |
+| `roblox-plan-execution` | Use when turning approved Roblox requirements into a multi-step Studio plan or reviewing a plan before mutation. |
+| `roblox-verification` | Use before claiming a Roblox Studio change is complete, fixed, working, safe, or ready to publish. |
 | `roblox-publish-checklist` | Use before publishing or updating a Roblox game to check data, security, performance, monetization, mobile, metadata, social, and analytics. |
 | `roblox-tooling` | Use when configuring Roblox tooling such as Rojo, Wally, Selene, StyLua, Lune, Aftman, luau-lsp, or CI/CD. |
 

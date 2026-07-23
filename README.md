@@ -28,8 +28,9 @@ verify → repair if needed
 
 - **Direct Studio Control** - AI creates, modifies, and deletes instances in real-time
 - **Script Editing** - Read, write, and make exact verified Luau replacements
-- **30 Roblox Skills** - Lazy quick/full guidance from
-  [`roblox-brain`](https://github.com/jakesixtyoneeighty/roblox-brain)
+- **34 Roblox Skills** - Lazy quick/full guidance from
+  [`roblox-brain`](https://github.com/jakesixtyoneeighty/roblox-brain) plus
+  Roblox-safe workflow adaptations from [`obra/superpowers`](https://github.com/obra/superpowers)
 - **Automatic Planning** - Complex changes begin with a visible, tracked plan
 - **Web Search** - Current Roblox documentation and uncertain facts can be researched
 - **Proof-Backed Verification** - A mutation must be followed by a successful Studio read-back before a plan can finish
@@ -266,7 +267,7 @@ bubbertron9001/
 │   │   ├── roblox/          # Roblox tools (Zod schemas)
 │   │   └── skills/          # Lazy skill catalog and loading tools
 │   └── stores/              # Zustand state management
-├── skills/                   # 30 vendored Roblox Brain skills
+├── skills/                   # 34 allowlisted Roblox and workflow skills
 ├── src-tauri/               # Rust backend
 │   └── src/
 │       ├── bridge.rs        # HTTP bridge server (Warp)
