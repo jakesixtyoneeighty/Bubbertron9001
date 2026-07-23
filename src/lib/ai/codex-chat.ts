@@ -16,7 +16,7 @@ import {
   type WorkerExecutionContext,
   type WorkerExecutor,
 } from "@/lib/agent";
-import { errorMessage, getToolError } from "./errors";
+import { errorMessage, getToolError, isAbortError } from "./errors";
 import { ASK_SYSTEM_PROMPT, ROBLOX_SYSTEM_PROMPT } from "./system-prompt";
 import {
   buildWorkerSystemPrompt,
@@ -67,6 +67,27 @@ interface ToolCall {
   id: string;
   name: string;
   arguments: string;
+}
+
+interface CodexStreamResult {
+  text: string;
+  toolCalls: ToolCall[];
+  webSearchUsed: boolean;
+}
+
+type CodexStreamCallbacks = Pick<
+  CodexChatCallbacks,
+  "signal" | "onToken" | "onToolCall" | "onToolResult" | "onSource"
+>;
+
+class CodexStreamReadError extends Error {
+  readonly retrySafe: boolean;
+
+  constructor(message: string, retrySafe: boolean) {
+    super(message);
+    this.name = "CodexStreamReadError";
+    this.retrySafe = retrySafe;
+  }
 }
 
 type InputItem =
@@ -254,6 +275,22 @@ function retryableStatus(status: number) {
   return status === 408 || status === 409 || status === 429 || status >= 500;
 }
 
+function retryableCodexTransportError(error: unknown) {
+  const message = errorMessage(error).toLowerCase();
+  return [
+    "error decoding response body",
+    "failed to fetch",
+    "network error",
+    "connection reset",
+    "connection closed",
+    "unexpected eof",
+    "failed to read response body",
+    "chatgpt returned no response body",
+    "chatgpt stream ended during a tool call",
+    "chatgpt sent an invalid stream event",
+  ].some((fragment) => message.includes(fragment));
+}
+
 async function abortableDelay(milliseconds: number, signal?: AbortSignal) {
   if (signal?.aborted) {
     throw new DOMException("Agent run cancelled", "AbortError");
@@ -346,69 +383,61 @@ function extractSources(value: unknown): WebSource[] {
   return sources;
 }
 
-async function makeCodexRequest(
-  model: string,
-  input: InputItem[],
-  tools: CodexToolDefinition[],
-  toolChoice: CodexToolChoice,
-  callbacks: Pick<
-    CodexChatCallbacks,
-    "signal" | "onToken" | "onToolCall" | "onToolResult" | "onSource"
-  >,
-  instructions = ROBLOX_SYSTEM_PROMPT,
-): Promise<{
-  text: string;
-  toolCalls: ToolCall[];
-  webSearchUsed: boolean;
-}> {
-  const accessToken = await getValidAccessToken();
-  if (!accessToken) {
-    throw new Error("Not authenticated with ChatGPT Plus/Pro");
-  }
-
-  const auth = getStoredAuth();
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken}`,
-    "Content-Type": "application/json",
-  };
-  if (auth?.accountId) {
-    headers["ChatGPT-Account-Id"] = auth.accountId;
-  }
-
-  const response = await requestWithRetry(
-    {
-      model,
-      instructions,
-      input,
-      tools,
-      tool_choice: toolChoice,
-      stream: true,
-      store: false,
-    },
-    headers,
-    callbacks.signal
-  );
-
+async function consumeCodexResponse(
+  response: Response,
+  callbacks: CodexStreamCallbacks,
+  deferEffects: boolean,
+): Promise<CodexStreamResult> {
   const reader = response.body?.getReader();
-  if (!reader) throw new Error("ChatGPT returned no response body");
+  if (!reader) {
+    throw new CodexStreamReadError(
+      "ChatGPT returned no response body",
+      true,
+    );
+  }
 
   const decoder = new TextDecoder();
   let text = "";
   let buffer = "";
   let receivedTextDelta = false;
   let terminalError: Error | null = null;
+  let invalidStreamEvent = false;
+  let effectsExposed = false;
   let webSearchUsed = false;
+  const deferredEffects: Array<() => void> = [];
   const toolCalls: ToolCall[] = [];
   const pendingToolCalls = new Map<
     string,
     { name: string; arguments: string }
   >();
 
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
+  const expose = (effect: () => void) => {
+    if (deferEffects) {
+      deferredEffects.push(effect);
+      return;
+    }
+    effectsExposed = true;
+    effect();
+  };
+  const emitToken = (token: string) => {
+    if (!token || !callbacks.onToken) return;
+    expose(() => callbacks.onToken?.(token));
+  };
 
-    buffer += decoder.decode(value, { stream: true });
+  while (true) {
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (error) {
+      if (isAbortError(error) || callbacks.signal?.aborted) throw error;
+      throw new CodexStreamReadError(
+        errorMessage(error),
+        !effectsExposed,
+      );
+    }
+    if (chunk.done) break;
+
+    buffer += decoder.decode(chunk.value, { stream: true });
     const lines = buffer.split(/\r?\n/);
     buffer = lines.pop() || "";
 
@@ -421,7 +450,7 @@ async function makeCodexRequest(
       try {
         event = JSON.parse(data) as Record<string, unknown>;
       } catch {
-        terminalError = new Error("ChatGPT sent an invalid stream event");
+        invalidStreamEvent = true;
         continue;
       }
 
@@ -435,7 +464,7 @@ async function makeCodexRequest(
         const delta = typeof event.delta === "string" ? event.delta : "";
         receivedTextDelta = true;
         text += delta;
-        callbacks.onToken?.(delta);
+        emitToken(delta);
       }
 
       if (
@@ -477,11 +506,13 @@ async function makeCodexRequest(
         item?.type === "web_search_call"
       ) {
         webSearchUsed = true;
-        callbacks.onToolCall?.({
-          id: String(item.id || "web_search"),
-          name: "web_search",
-          input: {},
-        });
+        if (callbacks.onToolCall) {
+          expose(() => callbacks.onToolCall?.({
+            id: String(item.id || "web_search"),
+            name: "web_search",
+            input: {},
+          }));
+        }
       }
 
       if (
@@ -489,16 +520,20 @@ async function makeCodexRequest(
         item?.type === "web_search_call"
       ) {
         webSearchUsed = true;
-        callbacks.onToolResult?.({
-          id: String(item.id || "web_search"),
-          name: "web_search",
-          output: { searched: true, status: item.status || "completed" },
-        });
+        if (callbacks.onToolResult) {
+          expose(() => callbacks.onToolResult?.({
+            id: String(item.id || "web_search"),
+            name: "web_search",
+            output: { searched: true, status: item.status || "completed" },
+          }));
+        }
       }
 
       if (type === "response.output_item.done" && item) {
         for (const source of extractSources(item)) {
-          callbacks.onSource?.(source);
+          if (callbacks.onSource) {
+            expose(() => callbacks.onSource?.(source));
+          }
         }
 
         if (
@@ -514,7 +549,7 @@ async function makeCodexRequest(
               typeof part.text === "string"
             ) {
               text += part.text;
-              callbacks.onToken?.(part.text);
+              emitToken(part.text);
             }
           }
         }
@@ -536,11 +571,114 @@ async function makeCodexRequest(
   }
 
   if (pendingToolCalls.size > 0) {
-    throw new Error("ChatGPT stream ended during a tool call");
+    throw new CodexStreamReadError(
+      "ChatGPT stream ended during a tool call",
+      !effectsExposed,
+    );
   }
-  if (terminalError) throw terminalError;
+  if (invalidStreamEvent) {
+    throw new CodexStreamReadError(
+      "ChatGPT sent an invalid stream event",
+      !effectsExposed,
+    );
+  }
+  if (terminalError) {
+    throw new CodexStreamReadError(
+      terminalError.message,
+      !effectsExposed,
+    );
+  }
+
+  try {
+    for (const effect of deferredEffects) effect();
+  } catch (error) {
+    throw new CodexStreamReadError(errorMessage(error), false);
+  }
 
   return { text, toolCalls, webSearchUsed };
+}
+
+export async function consumeCodexResponseWithRetry(
+  createResponse: () => Promise<Response>,
+  callbacks: CodexStreamCallbacks = {},
+  retryDelay: (
+    milliseconds: number,
+    signal?: AbortSignal,
+  ) => Promise<void> = abortableDelay,
+  deferEffects = false,
+): Promise<CodexStreamResult> {
+  for (let attempt = 0; attempt <= MAX_REQUEST_RETRIES; attempt += 1) {
+    try {
+      const response = await createResponse();
+      return await consumeCodexResponse(response, callbacks, deferEffects);
+    } catch (error) {
+      if (isAbortError(error) || callbacks.signal?.aborted) throw error;
+      const retrySafe =
+        !(error instanceof CodexStreamReadError) || error.retrySafe;
+      const retryable =
+        retrySafe && retryableCodexTransportError(error);
+      const isLastAttempt = attempt === MAX_REQUEST_RETRIES;
+      if (!retryable || isLastAttempt) {
+        if (retryable && isLastAttempt) {
+          throw new Error(
+            `ChatGPT response stream was interrupted after ${MAX_REQUEST_RETRIES + 1} attempts: ${errorMessage(error)}`
+          );
+        }
+        throw error;
+      }
+
+      await retryDelay(
+        Math.min(500 * 2 ** attempt, 2_000),
+        callbacks.signal,
+      );
+    }
+  }
+
+  throw new Error("ChatGPT response stream exhausted its retry budget");
+}
+
+async function makeCodexRequest(
+  model: string,
+  input: InputItem[],
+  tools: CodexToolDefinition[],
+  toolChoice: CodexToolChoice,
+  callbacks: Pick<
+    CodexChatCallbacks,
+    "signal" | "onToken" | "onToolCall" | "onToolResult" | "onSource"
+  >,
+  instructions = ROBLOX_SYSTEM_PROMPT,
+  deferEffects = false,
+): Promise<CodexStreamResult> {
+  const accessToken = await getValidAccessToken();
+  if (!accessToken) {
+    throw new Error("Not authenticated with ChatGPT Plus/Pro");
+  }
+
+  const auth = getStoredAuth();
+  const headers: Record<string, string> = {
+    Authorization: `Bearer ${accessToken}`,
+    "Content-Type": "application/json",
+  };
+  if (auth?.accountId) {
+    headers["ChatGPT-Account-Id"] = auth.accountId;
+  }
+
+  const requestBody = {
+    model,
+    instructions,
+    input,
+    tools,
+    tool_choice: toolChoice,
+    stream: true,
+    store: false,
+  };
+
+  return consumeCodexResponseWithRetry(
+    () => requestWithRetry(requestBody, headers, callbacks.signal),
+    callbacks,
+    abortableDelay,
+    deferEffects,
+  );
 }
 
 function parseWorkerOutput(text: string) {
@@ -752,6 +890,7 @@ export async function codexChat(
         toolChoice,
         callbacks,
         askMode ? ASK_SYSTEM_PROMPT : ROBLOX_SYSTEM_PROMPT,
+        !askMode,
       );
       fullText += result.text;
       webSearchUsed ||= result.webSearchUsed;
