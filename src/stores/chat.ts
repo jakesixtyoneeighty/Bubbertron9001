@@ -73,6 +73,7 @@ export interface ChatState {
   // Actions
   addMessage: (message: Omit<Message, "id" | "createdAt">) => string;
   updateMessage: (id: string, content: string) => void;
+  editMessageAndTruncate: (id: string, content: string) => void;
   addToolCall: (messageId: string, toolCall: Omit<ToolCall, "status">) => void;
   updateToolCall: (messageId: string, toolCallId: string, update: Partial<ToolCall>) => void;
   addSource: (messageId: string, source: MessageSource) => void;
@@ -171,6 +172,21 @@ export const useChatStore = create<ChatState>()(
         ),
       ),
     ),
+
+  editMessageAndTruncate: (id, content) =>
+    set((state) => {
+      const messageIndex = state.messages.findIndex(
+        (message) => message.id === id && message.role === "user",
+      );
+      if (messageIndex < 0) return state;
+
+      const messages = state.messages
+        .slice(0, messageIndex + 1)
+        .map((message) =>
+          message.id === id ? { ...message, content } : message,
+        );
+      return withSavedMessages(state, messages);
+    }),
 
   addToolCall: (messageId, toolCall) =>
     set((state) =>

@@ -57,7 +57,7 @@ function StepIcon({ status }: { status: PlanStepStatus }) {
   return <Circle className="h-3.5 w-3.5 text-muted-foreground" />;
 }
 
-export function PlanView() {
+export function PlanView({ embedded = false }: { embedded?: boolean }) {
   const phase = useAgentStore((state) => state.phase);
   const plan = useAgentStore((state) => state.plan);
   const workers = useAgentStore((state) => state.workers);
@@ -65,13 +65,14 @@ export function PlanView() {
   const [expanded, setExpanded] = useState(true);
 
   useEffect(() => {
+    if (embedded) return;
     if (phase === "planning" || phase === "repairing" || phase === "error") {
       setExpanded(true);
     }
     if (phase === "completed") {
       setExpanded(false);
     }
-  }, [phase]);
+  }, [embedded, phase]);
 
   const skillNames = useMemo(
     () =>
@@ -97,49 +98,68 @@ export function PlanView() {
     (step) => step.status === "completed" || step.status === "skipped"
   ).length;
 
-  return (
-    <section className="rounded-xl glass border border-primary/20 overflow-hidden animate-pop-in">
-      <button
-        type="button"
-        className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-primary/5 transition-colors"
-        onClick={() => setExpanded((value) => !value)}
-        aria-expanded={expanded}
-      >
-        {expanded ? (
+  const header = (
+    <>
+      {!embedded && (
+        expanded ? (
           <ChevronDown className="h-4 w-4 text-muted-foreground" />
         ) : (
           <ChevronRight className="h-4 w-4 text-muted-foreground" />
-        )}
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-medium truncate">{plan.goal}</span>
-            <span
-              className={cn(
-                "rounded-full px-2 py-0.5 text-[11px]",
-                phase === "error" || phase === "repairing"
-                  ? "bg-destructive/20 text-red-200"
-                  : phase === "completed"
-                    ? "bg-primary/20 text-primary"
-                    : "bg-muted text-muted-foreground"
-              )}
-            >
-              {phaseLabels[phase]}
-            </span>
-          </div>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {completed}/{plan.steps.length} steps
-            {skillNames.length > 0
-              ? ` · ${skillNames.length} skill${skillNames.length === 1 ? "" : "s"}`
-              : ""}
-          </p>
+        )
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="truncate text-sm font-medium">{plan.goal}</span>
+          <span
+            className={cn(
+              "rounded-full px-2 py-0.5 text-[11px]",
+              phase === "error" || phase === "repairing"
+                ? "bg-destructive/20 text-red-200"
+                : phase === "completed"
+                  ? "bg-primary/20 text-primary"
+                  : "bg-muted text-muted-foreground"
+            )}
+          >
+            {phaseLabels[phase]}
+          </span>
         </div>
-        {phase === "repairing" ? (
-          <RotateCcw className="h-4 w-4 text-amber-300" />
-        ) : null}
-      </button>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {completed}/{plan.steps.length} steps
+          {skillNames.length > 0
+            ? ` · ${skillNames.length} skill${skillNames.length === 1 ? "" : "s"}`
+            : ""}
+        </p>
+      </div>
+      {phase === "repairing" ? (
+        <RotateCcw className="h-4 w-4 text-amber-300" />
+      ) : null}
+    </>
+  );
 
-      {expanded ? (
-        <div className="border-t border-border/60 px-4 py-3 space-y-3">
+  return (
+    <section className={cn(
+      embedded
+        ? "space-y-3"
+        : "animate-pop-in overflow-hidden rounded-xl border border-primary/20 glass",
+    )}>
+      {embedded ? (
+        <div className="flex items-center gap-3 text-left">{header}</div>
+      ) : (
+        <button
+          type="button"
+          className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-primary/5"
+          onClick={() => setExpanded((value) => !value)}
+          aria-expanded={expanded}
+        >
+          {header}
+        </button>
+      )}
+
+      {embedded || expanded ? (
+        <div className={cn(
+          "space-y-3",
+          !embedded && "border-t border-border/60 px-4 py-3",
+        )}>
           <p className="text-xs text-muted-foreground">{plan.summary}</p>
           {skillNames.length > 0 ? (
             <div className="flex flex-wrap gap-1.5">

@@ -1,7 +1,14 @@
 import * as React from "react";
 import { cn } from "@/lib/utils";
 import { Loader } from "./loader";
-import { ChevronDown, ChevronRight, Check, X, Wrench, HelpCircle } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronRight,
+  Check,
+  CircleAlert,
+  Wrench,
+  HelpCircle,
+} from "lucide-react";
 
 export interface ToolCallProps {
   name: string;
@@ -44,98 +51,73 @@ export function ToolCall({
   const statusConfig = {
     pending: {
       icon: <Loader variant="circular" size="sm" />,
-      label: "Waiting...",
       color: "text-muted-foreground",
-      bgColor: "bg-muted/40 border-border/60",
     },
     running: {
       icon: <Loader variant="circular" size="sm" />,
-      label: "Running...",
       color: "text-primary",
-      bgColor: "bg-primary/10 border-primary/25 animate-glow",
     },
     waiting: {
       icon: <HelpCircle className="w-4 h-4" />,
-      label: "Waiting for response...",
       color: "text-amber-300",
-      bgColor: "bg-amber-400/10 border-amber-400/25",
     },
     complete: {
       icon: <Check className="w-4 h-4" />,
-      label: "Complete",
       color: "text-primary",
-      bgColor: "bg-primary/10 border-primary/20",
     },
     error: {
-      icon: <X className="w-4 h-4" />,
-      label: "Error",
+      icon: <CircleAlert className="w-4 h-4" />,
       color: "text-brick",
-      bgColor: "bg-destructive/15 border-destructive/30",
     },
   };
 
-  const { icon, color, bgColor } = statusConfig[status];
+  const { icon, color } = statusConfig[status];
 
   return (
-    <div
-      className={cn(
-        "rounded-xl border transition-all tool-call-enter hover:border-primary/30",
-        bgColor,
-        className
-      )}
-    >
-      {/* Header - always visible */}
+    <div className={cn("border-b border-border/50 last:border-b-0", className)}>
       <button
+        type="button"
         onClick={() => setIsExpanded(!isExpanded)}
-        className="w-full flex items-center gap-3 px-4 py-3 text-left"
+        className="flex w-full items-center gap-2.5 py-2 text-left text-sm transition-colors hover:text-foreground"
+        aria-expanded={isExpanded}
       >
-        {/* Expand/collapse icon */}
         <span className="text-muted-foreground">
           {isExpanded ? (
-            <ChevronDown className="w-4 h-4" />
+            <ChevronDown className="h-3.5 w-3.5" />
           ) : (
-            <ChevronRight className="w-4 h-4" />
+            <ChevronRight className="h-3.5 w-3.5" />
           )}
         </span>
-
-        {/* Tool icon */}
-        <span className={cn("flex-shrink-0", color)}>
-          <Wrench className="w-4 h-4" />
+        <span className={cn("shrink-0", color)}>
+          <Wrench className="h-3.5 w-3.5" />
         </span>
-
-        {/* Tool name */}
-        <span className="font-medium text-sm flex-1">
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">
           {formatToolName(name)}
         </span>
-
-        {/* Status indicator */}
-        <span className={cn("flex items-center gap-1.5", color)}>
+        <span className={cn("flex shrink-0 items-center", color)}>
           {icon}
         </span>
       </button>
 
-      {/* Expanded content */}
       {isExpanded && (
-        <div className="px-4 pb-4 pt-0 space-y-3">
-          {/* Input */}
+        <div className="space-y-3 pb-3 pl-6">
           {input && Object.keys(input).length > 0 && (
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Input
               </p>
-              <pre className="text-xs bg-background/80 rounded-lg p-3 overflow-x-auto border">
+              <pre className="max-h-48 overflow-auto rounded-lg border border-border/60 bg-background/60 p-3 text-xs">
                 {JSON.stringify(input, null, 2)}
               </pre>
             </div>
           )}
 
-          {/* Output */}
           {status === "complete" && output !== undefined && (
             <div className="space-y-1.5">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
                 Output
               </p>
-              <pre className="text-xs bg-background/80 rounded-lg p-3 overflow-x-auto border max-h-48 overflow-y-auto">
+              <pre className="max-h-48 overflow-auto rounded-lg border border-border/60 bg-background/60 p-3 text-xs">
                 {typeof output === "string" 
                   ? output 
                   : JSON.stringify(output, null, 2)}
@@ -149,7 +131,7 @@ export function ToolCall({
               <p className="text-xs font-medium text-brick uppercase tracking-wide">
                 Error
               </p>
-              <pre className="text-xs bg-destructive/20 text-red-200 rounded-lg p-3 overflow-x-auto border border-destructive/30">
+              <pre className="overflow-x-auto rounded-lg border border-destructive/30 bg-destructive/20 p-3 text-xs text-red-200">
                 {error}
               </pre>
             </div>
@@ -171,23 +153,132 @@ export interface ToolCallsProps {
     error?: string;
   }>;
   className?: string;
+  isActive?: boolean;
+  isWaiting?: boolean;
+  mode?: "ask" | "build";
+  children?: React.ReactNode;
 }
 
-export function ToolCalls({ toolCalls, className }: ToolCallsProps) {
-  if (!toolCalls || toolCalls.length === 0) return null;
+export function getActivityLabel(
+  toolCalls: ToolCallsProps["toolCalls"],
+  mode: "ask" | "build",
+  isActive: boolean,
+  isWaiting = false,
+) {
+  if (!isActive) {
+    return toolCalls.some((toolCall) => toolCall.status === "error")
+      ? "Worked with issues"
+      : "Worked";
+  }
+  if (isWaiting) return "Waiting for you";
+
+  const currentTool = [...toolCalls]
+    .reverse()
+    .find((toolCall) =>
+      ["pending", "running", "waiting"].includes(toolCall.status),
+    )?.name;
+
+  if (currentTool === "agent_create_plan") return "Planning";
+  if (currentTool === "agent_finish_plan") return "Verifying";
+  if (currentTool === "web_search" || currentTool?.startsWith("skill_")) {
+    return "Researching";
+  }
+  if (
+    currentTool &&
+    /(create|set|edit|delete|move|clone|bulk|game)/.test(currentTool)
+  ) {
+    return "Building";
+  }
+  return mode === "ask" ? "Thinking" : "Working";
+}
+
+export function ToolCalls({
+  toolCalls,
+  className,
+  isActive = false,
+  isWaiting = false,
+  mode = "build",
+  children,
+}: ToolCallsProps) {
+  const [isExpanded, setIsExpanded] = React.useState(isActive);
+
+  React.useEffect(() => {
+    setIsExpanded(isActive);
+  }, [isActive]);
+
+  if ((!toolCalls || toolCalls.length === 0) && !isActive && !children) {
+    return null;
+  }
+
+  const label = getActivityLabel(toolCalls, mode, isActive, isWaiting);
+  const errorCount = toolCalls.filter((toolCall) => toolCall.status === "error").length;
+  const actionLabel = toolCalls.length > 0
+    ? `${toolCalls.length} action${toolCalls.length === 1 ? "" : "s"}`
+    : mode === "ask"
+      ? "Preparing a response"
+      : "Preparing the workspace";
 
   return (
-    <div className={cn("space-y-2", className)}>
-      {toolCalls.map((tc) => (
-        <ToolCall
-          key={tc.id}
-          name={tc.name}
-          input={tc.args}
-          output={tc.result}
-          status={tc.status}
-          error={tc.error}
-        />
-      ))}
-    </div>
+    <section
+      className={cn(
+        "overflow-hidden rounded-xl border border-border/70 bg-background/30",
+        isActive && "border-primary/25 bg-primary/5",
+        className,
+      )}
+    >
+      <button
+        type="button"
+        className="flex w-full items-center gap-3 px-3.5 py-2.5 text-left transition-colors hover:bg-primary/5"
+        onClick={() => setIsExpanded((expanded) => !expanded)}
+        aria-expanded={isExpanded}
+      >
+        {isExpanded ? (
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        ) : (
+          <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+        )}
+        {isActive ? (
+          <Loader variant="circular" size="sm" />
+        ) : errorCount > 0 ? (
+          <CircleAlert className="h-4 w-4 shrink-0 text-brick" />
+        ) : (
+          <Check className="h-4 w-4 shrink-0 text-primary" />
+        )}
+        <span className="min-w-0 flex-1 text-sm font-medium">
+          {label}{isActive ? "…" : ""}
+        </span>
+        <span className="shrink-0 text-xs text-muted-foreground">
+          {actionLabel}
+        </span>
+      </button>
+
+      {isExpanded && (
+        <div className="border-t border-border/60 px-3.5 py-2.5">
+          {children}
+          {toolCalls.length > 0 ? (
+            <div className={cn(children && "mt-3 border-t border-border/50 pt-1")}>
+              {toolCalls.map((toolCall) => (
+                <ToolCall
+                  key={toolCall.id}
+                  name={toolCall.name}
+                  input={toolCall.args}
+                  output={toolCall.result}
+                  status={toolCall.status}
+                  error={toolCall.error}
+                />
+              ))}
+            </div>
+          ) : (
+            !children && (
+              <p className="py-1 text-xs text-muted-foreground">
+                {isWaiting
+                  ? "The build will continue after your answer."
+                  : "Getting the next step ready."}
+              </p>
+            )
+          )}
+        </div>
+      )}
+    </section>
   );
 }

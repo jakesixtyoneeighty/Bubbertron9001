@@ -55,4 +55,28 @@ describe("chat conversations", () => {
     expect(useChatStore.getState().mode).toBe("ask");
     expect(useChatStore.getState().conversations[0].mode).toBe("ask");
   });
+
+  it("edits a user prompt and removes the stale conversation branch", () => {
+    const store = useChatStore.getState();
+    const firstPromptId = store.addMessage({
+      role: "user",
+      content: "Build a red obby",
+    });
+    store.addMessage({ role: "assistant", content: "I built a red obby." });
+    store.addMessage({ role: "user", content: "Make it harder" });
+
+    useChatStore
+      .getState()
+      .editMessageAndTruncate(firstPromptId, "Build a blue obby");
+
+    const state = useChatStore.getState();
+    expect(state.messages).toHaveLength(1);
+    expect(state.messages[0]).toMatchObject({
+      id: firstPromptId,
+      role: "user",
+      content: "Build a blue obby",
+    });
+    expect(state.conversations[0].messages).toEqual(state.messages);
+    expect(state.conversations[0].title).toBe("Build a blue obby");
+  });
 });

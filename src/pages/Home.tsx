@@ -24,6 +24,7 @@ import { ContextChips, ChipAction } from "@/components/chat/ContextChips";
 import { QuestionPrompt } from "@/components/chat/QuestionPrompt";
 import { InstancePicker } from "@/components/chat/InstancePicker";
 import { PlanView } from "@/components/chat/PlanView";
+import { UserPrompt } from "@/components/chat/UserPrompt";
 import { SourceList } from "@/components/chat/SourceList";
 import { ChatModeToggle } from "@/components/chat/ChatModeToggle";
 import { ConversationHistory } from "@/components/chat/ConversationHistory";
@@ -465,6 +466,7 @@ export function Home() {
     pendingQuestion,
     addMessage,
     updateMessage,
+    editMessageAndTruncate,
     addToolCall,
     updateToolCall,
     addSource,
@@ -476,6 +478,7 @@ export function Home() {
     clearMessages,
     setMode,
   } = useChatStore();
+  const agentPlan = useAgentStore((state) => state.plan);
   const { hasApiKey } = useSettingsStore();
   const hasOAuthSession = useAuthStore((state) =>
     state.isOAuthAuthenticated()
@@ -564,12 +567,27 @@ export function Home() {
     }
   }, [input, isImproving, isStreaming]);
 
-  const handleSubmit = useCallback(async (override?: string) => {
+  const handleSubmit = useCallback(async (
+    override?: string,
+    editedMessageId?: string,
+  ) => {
     const submittedInput = typeof override === "string" ? override : input;
     if (!submittedInput.trim() || isStreaming) return;
 
     const userMessage = submittedInput.trim();
-    const requestChips = [...activeChips];
+    const editedMessageIndex = editedMessageId
+      ? messages.findIndex((message) => message.id === editedMessageId)
+      : -1;
+    if (editedMessageId && editedMessageIndex < 0) return;
+    const editedMessage = editedMessageIndex >= 0
+      ? messages[editedMessageIndex]
+      : undefined;
+    const requestChips = editedMessageId
+      ? ([...(editedMessage?.contextChips ?? [])] as ChipAction[])
+      : [...activeChips];
+    const conversationHistory = editedMessageIndex >= 0
+      ? messages.slice(0, editedMessageIndex)
+      : messages;
 
     // Build context prefix based on active chips
     const prefixes: string[] = [];
@@ -589,17 +607,21 @@ export function Home() {
     const fullMessage = chipContext ? `${chipContext}\n\n${userMessage}` : userMessage;
 
     setInput("");
-    setActiveChips([]); // Clear chips after submit
+    if (!editedMessageId) setActiveChips([]);
     playSound("send");
 
     console.log("[Home] Submitting message:", userMessage, "with context:", chipContext);
 
-    // Add user message (show without context prefix for cleaner UI, but store chips)
-    addMessage({
-      role: "user",
-      content: userMessage,
-      contextChips: requestChips.length > 0 ? requestChips : undefined,
-    });
+    if (editedMessageId) {
+      editMessageAndTruncate(editedMessageId, userMessage);
+    } else {
+      // Show context as chips in the UI while sending the expanded prompt.
+      addMessage({
+        role: "user",
+        content: userMessage,
+        contextChips: requestChips.length > 0 ? requestChips : undefined,
+      });
+    }
 
     // Add placeholder for assistant
     const assistantId = addMessage({ role: "assistant", content: "" });
@@ -611,7 +633,10 @@ export function Home() {
 
     try {
       const chatMessages = [
-        ...messages.map((m) => ({ role: m.role, content: m.content })),
+        ...conversationHistory.map((message) => ({
+          role: message.role,
+          content: message.content,
+        })),
         { role: "user" as const, content: fullMessage },
       ];
 
@@ -717,6 +742,7 @@ export function Home() {
     mode,
     addMessage,
     updateMessage,
+    editMessageAndTruncate,
     addToolCall,
     updateToolCall,
     addSource,
@@ -1058,15 +1084,17 @@ export function Home() {
             </div>
           )}
 
-          <PlanView />
-
           {/* Empty state when no messages */}
           {messages.length === 0 && !isStreaming && (
             <EmptyState className="py-8" />
           )}
 
-          {messages.map((message) => (
-            <Message key={message.id} className="gap-4 message-enter">
+          {messages.map((message, messageIndex) => {
+            const isLatestAssistant =
+              message.role === "assistant" && messageIndex === messages.length - 1;
+
+            return (
+              <Message key={message.id} className="gap-4 message-enter">
               {message.role === "assistant" ? (
                 <BotAvatar />
               ) : (
@@ -1091,39 +1119,46 @@ export function Home() {
                   </div>
                 )}
 
-                {/* Tool calls (shown before content for assistant) */}
-                {message.role === "assistant" && message.toolCalls && message.toolCalls.length > 0 && (
-                  <ToolCalls toolCalls={message.toolCalls} />
+                {/* One compact work log replaces the individual tool-call cards. */}
+                {message.role === "assistant" && (
+                  (message.toolCalls?.length ?? 0) > 0 ||
+                  (isLatestAssistant && (isStreaming || agentPlan))
+                ) && (
+                  <ToolCalls
+                    toolCalls={message.toolCalls ?? []}
+                    isActive={isLatestAssistant && isStreaming}
+                    isWaiting={isLatestAssistant && Boolean(pendingQuestion)}
+                    mode={mode}
+                  >
+                    {isLatestAssistant && agentPlan ? <PlanView embedded /> : undefined}
+                  </ToolCalls>
                 )}
 
                 {/* Message content */}
-                {message.content ? (
+                {message.role === "user" ? (
+                  <UserPrompt
+                    content={message.content}
+                    disabled={isStreaming}
+                    onEditAndRerun={(content) =>
+                      handleSubmit(content, message.id)
+                    }
+                  />
+                ) : message.content ? (
                   <MessageContent
-                    markdown={message.role === "assistant"}
-                    className={cn(
-                      "prose prose-sm max-w-none prose-invert",
-                      message.role === "user"
-                        ? "bubble-user rounded-2xl px-4 py-3"
-                        : "bubble-assistant rounded-2xl px-4 py-3"
-                    )}
+                    markdown
+                    className="bubble-assistant rounded-2xl px-4 py-3 prose prose-sm max-w-none prose-invert"
                   >
                     {message.content}
                   </MessageContent>
-                ) : (
-                  isStreaming && message.role === "assistant" && !message.toolCalls?.length && (
-                    <div className="flex items-center gap-2 h-8 px-3 glass rounded-full w-fit">
-                      <Loader variant="wave" size="sm" />
-                      <span className="text-sm text-muted-foreground">Cooking up ideas...</span>
-                    </div>
-                  )
-                )}
+                ) : null}
 
                 {message.role === "assistant" && message.sources && (
                   <SourceList sources={message.sources} />
                 )}
               </div>
-            </Message>
-          ))}
+              </Message>
+            );
+          })}
 
           {/* Pending question from AI */}
           {pendingQuestion && (
@@ -1136,17 +1171,6 @@ export function Home() {
             </div>
           )}
 
-          {/* Streaming indicator */}
-          {isStreaming && !pendingQuestion && (
-            <div className="flex items-center gap-3 px-4 py-3 glass rounded-xl max-w-fit mx-auto animate-glow">
-              <Loader variant="wave" size="sm" />
-              <span className="text-sm text-muted-foreground">
-                {mode === "ask"
-                  ? `${BRAND.shortName} is thinking...`
-                  : `${BRAND.name} is building...`}
-              </span>
-            </div>
-          )}
         </ChatContainerContent>
         
         {/* Scroll to bottom button */}
